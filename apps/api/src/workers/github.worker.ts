@@ -146,8 +146,13 @@ async function setBranchProtection(octokit: Octokit, org: string, slug: string) 
       restrictions: null,
     });
     return "Branch protection configured on main";
-  } catch {
-    return "Branch protection skipped (may need admin permissions)";
+  } catch (e: unknown) {
+    const status = (e as { status?: number }).status;
+    const message = (e as { message?: string }).message ?? String(e);
+    if (status === 403) {
+      return `Branch protection skipped: token lacks admin permission (${message}). Ensure your PAT has "repo" and "admin:repo_hook" scopes.`;
+    }
+    return `Branch protection skipped: ${message}`;
   }
 }
 
