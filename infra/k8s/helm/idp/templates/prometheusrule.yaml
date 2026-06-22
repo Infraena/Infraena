@@ -1,0 +1,61 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "idp.fullname" . }}
+  labels:
+    {{- include "idp.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: idp-alerts
+      rules:
+        - alert: InfraenaHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{job="{{ include "idp.fullname" . }}-api",status_code=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{job="{{ include "idp.fullname" . }}-api"}[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+            component: idp-api
+          annotations:
+            summary: "infraena-api high error rate (>5%)"
+            description: "Error rate is {{ $value | humanizePercentage }} in the last 5 minutes."
+
+        - alert: InfraenaHighLatency
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_request_duration_seconds_bucket{job="{{ include "idp.fullname" . }}-api"}[5m])) by (le)
+            ) > 2
+          for: 5m
+          labels:
+            severity: warning
+            component: idp-api
+          annotations:
+            summary: "infraena-api high latency (p95 > 2s)"
+            description: "p95 latency is {{ $value }}s in the last 5 minutes."
+
+        - alert: InfraenaProvisionJobFailing
+          expr: |
+            increase(idp_provision_jobs_total{job="{{ include "idp.fullname" . }}-api",status="failed"}[15m]) > 0
+          for: 0m
+          labels:
+            severity: warning
+            component: idp-workers
+          annotations:
+            summary: "Infraena provision job failed"
+            description: "Type {{ $labels.type }} failed {{ $value }} times in the last 15 minutes."
+
+        - alert: InfraenaDown
+          expr: up{job="{{ include "idp.fullname" . }}-api"} == 0
+          for: 1m
+          labels:
+            severity: critical
+            component: idp-api
+          annotations:
+            summary: "infraena-api is down"
+            description: "The API instance has been down for more than 1 minute."
+{{- end }}

@@ -1,0 +1,11 @@
+# .dockerignore
+node_modules/
+dist/
+.turbo/
+.env
+.env.local
+.env.*.local
+*.log
+.git/
+.DS_Store
+README.md

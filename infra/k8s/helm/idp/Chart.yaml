@@ -1,0 +1,12 @@
+apiVersion: v2
+name: idp
+description: Internal Developer Platform - self-service infrastructure provisioning
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - idp
+  - platform-engineering
+  - devops
+maintainers:
+  - name: Platform Team

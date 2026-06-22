@@ -1,0 +1,1 @@
+{"name":"{{serviceName}}","private":true,"scripts":{"dev":"remix dev","build":"remix build","start":"remix-serve build"},"dependencies":{"@remix-run/node":"^2","@remix-run/react":"^2","react":"^18","react-dom":"^18"},"devDependencies":{"@remix-run/dev":"^2","typescript":"^5"}}

@@ -1,0 +1,179 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/idp
+  pullPolicy: IfNotPresent
+  tag: latest
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 1001
+
+securityContext:
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 1001
+
+api:
+  enabled: true
+  replicas: 2
+  image:
+    repository: idp-api
+    tag: latest
+  resources:
+    requests:
+      cpu: 100m
+      memory: 192Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    API_PORT: "8080"
+    NODE_ENV: production
+
+web:
+  enabled: true
+  replicas: 2
+  image:
+    repository: idp-web
+    tag: latest
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  env:
+    NODE_ENV: production
+
+service:
+  api:
+    type: ClusterIP
+    port: 8080
+  web:
+    type: ClusterIP
+    port: 80
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: idp.local
+      paths:
+        - path: /
+          pathType: Prefix
+          backendService: web
+        - path: /api
+          pathType: Prefix
+          backendService: api
+        - path: /auth
+          pathType: Prefix
+          backendService: api
+        - path: /socket.io
+          pathType: Prefix
+          backendService: api
+  tls:
+    - secretName: idp-tls
+      hosts:
+        - idp.local
+
+hpa:
+  enabled: false
+  api:
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+  web:
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  labels:
+    release: kube-prometheus-stack
+
+prometheusRule:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+
+externalSecrets:
+  enabled: true
+  secretStoreName: vault-backend
+  refreshInterval: 1h
+  secrets:
+    - name: idp-database
+      kind: SecretStore
+      data:
+        - secretKey: DATABASE_URL
+          remoteRef:
+            key: idp/database
+            property: url
+    - name: idp-github
+      kind: SecretStore
+      data:
+        - secretKey: GITHUB_CLIENT_ID
+          remoteRef:
+            key: idp/github
+            property: client_id
+        - secretKey: GITHUB_CLIENT_SECRET
+          remoteRef:
+            key: idp/github
+            property: client_secret
+        - secretKey: GITHUB_ORG
+          remoteRef:
+            key: idp/github
+            property: org
+        - secretKey: GITHUB_TOKEN
+          remoteRef:
+            key: idp/github
+            property: token
+    - name: idp-secrets
+      kind: SecretStore
+      data:
+        - secretKey: JWT_SECRET
+          remoteRef:
+            key: idp/secrets
+            property: jwt_secret
+        - secretKey: VAULT_TOKEN
+          remoteRef:
+            key: idp/secrets
+            property: vault_token
+    - name: idp-terraform
+      kind: SecretStore
+      data:
+        - secretKey: TERRAFORM_CLOUD_TOKEN
+          remoteRef:
+            key: idp/terraform
+            property: cloud_token
+        - secretKey: TERRAFORM_ORG
+          remoteRef:
+            key: idp/terraform
+            property: org
+
+configmap:
+  REDIS_URL: redis://redis-master.redis.svc.cluster.local:6379
+  VAULT_ADDR: http://vault.vault.svc.cluster.local:8200
+  CORS_ORIGIN: https://idp.local

@@ -1,0 +1,12 @@
+{
+  "name": "idp",
+  "version": "0.1.0",
+  "description": "CLI for IDP Platform — self-service infrastructure provisioning",
+  "type": "module",
+  "bin": {
+    "idp": "./idp.js"
+  },
+  "dependencies": {
+    "chalk": "^5"
+  }
+}

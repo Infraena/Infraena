@@ -1,0 +1,27 @@
+{
+  "name": "idp",
+  "private": true,
+  "packageManager": "pnpm@11.6.0",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "test": "turbo test",
+    "lint": "turbo lint",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,json,md,yaml}\"",
+    "db:migrate": "pnpm --filter @idp/api exec prisma migrate dev",
+    "db:generate": "pnpm --filter @idp/api exec prisma generate",
+    "db:studio": "pnpm --filter @idp/api exec prisma studio"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.0",
+    "turbo": "^2.4.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["prisma", "esbuild"]
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}

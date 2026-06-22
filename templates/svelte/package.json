@@ -1,0 +1,1 @@
+{"name":"{{serviceName}}","private":true,"version":"1.0.0","scripts":{"dev":"vite dev","build":"vite build"},"devDependencies":{"@sveltejs/kit":"^2","svelte":"^5","typescript":"^5","vite":"^6"}}

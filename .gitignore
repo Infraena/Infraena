@@ -1,0 +1,68 @@
+AGENTS.md
+
+node_modules/
+dist/
+.next/
+.turbo/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+STRATEGY.md
+docs/index.html
+docs/README.md
+docs/ARCHITECTURE.md
+docs/DEVELOPMENT.md
+docs/ROADMAP.md
+wiki.md
+
+# CLI
+.idp-token
+cli/node_modules/
+
+# Test
+coverage/
+test-results/
+playwright-report/
+
+# Build artifacts
+*.tsbuildinfo
+
+# Prisma
+prisma/migrations/dev/
+
+# Terraform
+infra/terraform/**/.terraform/
+infra/terraform/**/terraform.tfstate*
+infra/terraform/**/terraform.tfvars
+infra/terraform/**/.terraform.lock.hcl
+infra/terraform/**/backend.tf
+
+# Certificates & keys
+*.pem
+*.key
+*.crt
+*.pfx
+kubeconfig*
+credentials*
+
+# Docker
+docker-compose.override.yml

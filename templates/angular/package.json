@@ -1,0 +1,1 @@
+{"name":"{{serviceName}}","private":true,"version":"1.0.0","scripts":{"start":"ng serve","build":"ng build"},"dependencies":{"@angular/core":"^18","@angular/platform-browser":"^18"},"devDependencies":{"@angular/cli":"^18","typescript":"^5"}}

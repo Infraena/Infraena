@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{serviceName}}
+  labels:
+    app: {{serviceName}}
+    managed-by: idp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: {{serviceName}}
+  template:
+    metadata:
+      labels:
+        app: {{serviceName}}
+    spec:
+      containers:
+        - name: app
+          image: {{serviceName}}:latest
+          ports:
+            - containerPort: 3000

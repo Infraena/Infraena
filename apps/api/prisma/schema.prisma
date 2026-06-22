@@ -1,0 +1,86 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Team {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String    @unique
+  slug      String    @unique
+  createdAt DateTime  @default(now()) @map("created_at")
+  users     User[]
+  services  Service[]
+
+  @@map("teams")
+}
+
+model User {
+  id        String    @id @default(uuid()) @db.Uuid
+  githubId  String    @unique @map("github_id")
+  username  String
+  email     String?
+  avatarUrl String?   @map("avatar_url")
+  teamId    String?   @map("team_id") @db.Uuid
+  team      Team?     @relation(fields: [teamId], references: [id])
+  role      String    @default("member")
+  createdAt DateTime  @default(now()) @map("created_at")
+  services  Service[]
+  deployments Deployment[]
+
+  @@map("users")
+}
+
+model Service {
+  id            String           @id @default(uuid()) @db.Uuid
+  name          String           @unique
+  slug          String           @unique
+  description   String?
+  category      String           @default("backend")
+  languages     String[]         @default([]) @map("language")
+  teamId        String           @map("team_id") @db.Uuid
+  team          Team             @relation(fields: [teamId], references: [id])
+  ownerId       String?          @map("owner_id") @db.Uuid
+  owner         User?            @relation(fields: [ownerId], references: [id])
+  githubRepoUrl String?          @map("github_repo_url")
+  status        String           @default("provisioning")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+  provisionJobs ProvisionJob[]
+  deployments   Deployment[]
+
+  @@map("services")
+}
+
+model ProvisionJob {
+  id          String    @id @default(uuid()) @db.Uuid
+  serviceId   String    @map("service_id") @db.Uuid
+  service     Service   @relation(fields: [serviceId], references: [id])
+  type        String
+  status      String    @default("pending")
+  logs        String[]  @default([])
+  error       String?
+  startedAt   DateTime? @map("started_at")
+  finishedAt  DateTime? @map("finished_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@map("provision_jobs")
+}
+
+model Deployment {
+  id            String    @id @default(uuid()) @db.Uuid
+  serviceId     String    @map("service_id") @db.Uuid
+  service       Service   @relation(fields: [serviceId], references: [id])
+  version       String
+  environment   String    @default("staging")
+  status        String    @default("pending")
+  triggeredById String?   @map("triggered_by") @db.Uuid
+  triggeredBy   User?     @relation(fields: [triggeredById], references: [id])
+  argocdApp     String?   @map("argocd_app")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@map("deployments")
+}
