@@ -158,7 +158,7 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
           `/api/services/${result.slug}/jobs`
         );
         const allDone = jobs.every((j) => j.status === "success" || j.status === "failed");
-        if (allDone && jobs.length >= 3) {
+        if (allDone && jobs.length > 0 && jobs.length >= provisioning.length) {
           const svc = await api.get<Service>(`/api/services/${result.slug}`);
           setResult(svc);
           setStep("done");
