@@ -53,7 +53,7 @@ your GitHub OAuth credentials to log in and create services.
 
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│   React SPA  │────▶│  Fastify API │────▶│  PostgreSQL  │
+│   React SPA  │───▶│  Fastify API │────▶│  PostgreSQL  │
 │   :3000      │     │  :8080       │     │              │
 └──────────────┘     └──────┬───────┘     └──────────────┘
                             │

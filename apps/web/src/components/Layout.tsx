@@ -102,7 +102,7 @@ export function Layout({ children, user, onLogin, onLogout, currentPath, onNavig
             <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary">
               <Layers className="w-4 h-4 text-primary-foreground" />
             </div>
-            <span className="text-sm tracking-tight">Platform</span>
+            <span className="text-sm tracking-tight">Infraena</span>
           </button>
 
           <nav className="flex items-center gap-1 text-sm">
