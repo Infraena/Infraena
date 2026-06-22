@@ -28,7 +28,8 @@ export const CATEGORIES = {
 export type ServiceCategory = keyof typeof CATEGORIES;
 export type ServiceLanguage = (typeof CATEGORIES)[ServiceCategory][number];
 export type ServiceStatus = "provisioning" | "ready" | "failed";
-export type JobType = "github" | "terraform" | "vault";
+export type ProvisioningStep = "github" | "terraform" | "vault";
+export type JobType = ProvisioningStep;
 export type JobStatus = "pending" | "running" | "success" | "failed";
 export type DeploymentStatus = "pending" | "running" | "success" | "failed";
 export type Environment = "staging" | "production";
@@ -43,6 +44,7 @@ export interface Service {
   teamId: string;
   ownerId: string;
   githubRepoUrl: string | null;
+  provisioning: ProvisioningStep[];
   status: ServiceStatus;
   createdAt: string;
   updatedAt: string;
@@ -84,7 +86,7 @@ export interface CreateServiceInput {
   teamId: string;
   category: ServiceCategory;
   languages?: ServiceLanguage[];
-  environment?: Environment;
+  template?: string;
 }
 
 export interface JobUpdateMessage {

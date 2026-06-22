@@ -46,6 +46,7 @@ model Service {
   ownerId       String?          @map("owner_id") @db.Uuid
   owner         User?            @relation(fields: [ownerId], references: [id])
   githubRepoUrl String?          @map("github_repo_url")
+  provisioning  String[]         @default(["github","terraform","vault"])
   status        String           @default("provisioning")
   createdAt     DateTime         @default(now()) @map("created_at")
   updatedAt     DateTime         @updatedAt @map("updated_at")

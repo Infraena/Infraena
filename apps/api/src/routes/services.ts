@@ -77,6 +77,8 @@ const createServiceSchema = z.object({
   category: z.enum(Object.keys(categories) as [CategoryKey, ...CategoryKey[]]),
   languages: z.array(z.string()),
   template: z.string().optional(),
+  provisioning: z.array(z.enum(["github", "terraform", "vault"])).optional(),
+  enableBranchProtection: z.boolean().optional(),
 });
 
 export async function serviceRoutes(app: FastifyInstance) {
@@ -183,7 +185,7 @@ export async function serviceRoutes(app: FastifyInstance) {
         .send({ error: parseResult.error.flatten().fieldErrors });
     }
 
-    const { name, description, teamId, category, languages, template } = parseResult.data;
+    const { name, description, teamId, category, languages, template, provisioning, enableBranchProtection } = parseResult.data;
     const user = getUser(request);
     const slug = name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
 
@@ -202,6 +204,8 @@ export async function serviceRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Team not found" });
     }
 
+    const selectedSteps = provisioning ?? ["github", "terraform", "vault"];
+
     const service = await prisma.service.create({
       data: {
         name,
@@ -209,6 +213,7 @@ export async function serviceRoutes(app: FastifyInstance) {
         description: description ?? null,
         category,
         languages: languages ?? [],
+        provisioning: selectedSteps,
         teamId,
         ownerId: user?.sub
           ? await prisma.user.findUnique({ where: { id: user.sub } }).then((u) => u?.id ?? null)
@@ -218,11 +223,13 @@ export async function serviceRoutes(app: FastifyInstance) {
       include: { team: true, owner: true },
     });
 
-    const jobTypes = [
+    const allJobTypes = [
       { type: "github" as const, queue: githubQueue },
       { type: "terraform" as const, queue: terraformQueue },
       { type: "vault" as const, queue: vaultQueue },
     ];
+
+    const jobTypes = allJobTypes.filter((jt) => selectedSteps.includes(jt.type));
 
     const jobs = await Promise.all(
       jobTypes.map(({ type }) =>
@@ -239,18 +246,22 @@ export async function serviceRoutes(app: FastifyInstance) {
     const isTest = process.env.NODE_ENV === "test" || process.env.VITEST;
 
     for (let i = 0; i < jobTypes.length; i++) {
-      const { queue } = jobTypes[i];
+      const { queue, type } = jobTypes[i];
       const job = jobs[i];
 
       if (!isTest) {
-        await queue.add(job.type, {
+        const jobData: Record<string, unknown> = {
           serviceId: service.id,
           jobId: job.id,
           slug: service.slug,
           category: service.category,
           languages: service.languages,
           template: template ?? languages?.[0] ?? category,
-        }, {
+        };
+        if (type === "github") {
+          (jobData as Record<string, unknown>).enableBranchProtection = enableBranchProtection ?? true;
+        }
+        await queue.add(type, jobData, {
           jobId: job.id,
           attempts: 3,
           backoff: { type: "exponential", delay: 5000 },

@@ -40,6 +40,7 @@ interface GitHubJobData {
   category: string;
   languages: string[];
   template?: string;
+  enableBranchProtection?: boolean;
 }
 
 async function repoExists(octokit: Octokit, org: string, repo: string): Promise<boolean> {
@@ -162,7 +163,7 @@ export async function buildGitHubWorker() {
   const worker = new Worker<GitHubJobData>(
     "github-queue",
     async (job: Job<GitHubJobData>) => {
-      const { serviceId, jobId, slug, category, languages, template } = job.data;
+      const { serviceId, jobId, slug, category, languages, template, enableBranchProtection } = job.data;
 
       const provisionJob = await prisma.provisionJob.findUnique({
         where: { id: jobId },
@@ -235,9 +236,13 @@ export async function buildGitHubWorker() {
         const topicResult = await addIdpTopic(octokit, org, slug);
         await log(topicResult);
 
-        await log("Configuring branch protection...");
-        const protectionResult = await setBranchProtection(octokit, org, slug);
-        await log(protectionResult);
+        if (enableBranchProtection !== false) {
+          await log("Configuring branch protection...");
+          const protectionResult = await setBranchProtection(octokit, org, slug);
+          await log(protectionResult);
+        } else {
+          await log("Branch protection skipped (disabled by user).");
+        }
 
         await markJobSuccess(provisionJob);
         await checkAllJobsComplete(serviceId);

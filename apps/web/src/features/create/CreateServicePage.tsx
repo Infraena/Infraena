@@ -92,6 +92,8 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [provisioning, setProvisioning] = useState<string[]>(["github", "terraform", "vault"]);
+  const [enableBranchProtection, setEnableBranchProtection] = useState(true);
 
   const logs = useProvisionLogs(serviceId);
 
@@ -135,6 +137,8 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
         category: data.category,
         languages: data.languages,
         template: selectedTemplate ?? data.languages?.[0] ?? data.category,
+        provisioning,
+        enableBranchProtection,
       };
       const service = await api.post<Service>("/api/services", payload);
       setResult(service);
@@ -220,7 +224,7 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
         </Card>
 
         <div className="mt-6 space-y-3">
-          {(["github", "terraform", "vault"] as const).map((type) => (
+          {(provisioning as ("github" | "terraform" | "vault")[]).map((type) => (
             <details key={type} className="group">
               <summary className="text-xs font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors capitalize">
                 {type} logs ({(logs[type] ?? []).length} entries)
@@ -250,7 +254,7 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
           </CardHeader>
 
           <CardContent className="space-y-3">
-            {(["github", "terraform", "vault"] as const).map((type) => {
+            {(provisioning as ("github" | "terraform" | "vault")[]).map((type) => {
               const typeLogs = logs[type] ?? [];
               const lastLog = typeLogs[typeLogs.length - 1] ?? "";
               const isRunning = typeLogs.length > 0 && !lastLog.includes("completed") && !lastLog.includes("successfully");
@@ -394,6 +398,56 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
                   </div>
                 </div>
               ))}
+            </div>
+
+            <div className="space-y-3">
+              <label className="text-sm font-medium">Provisioning</label>
+              <p className="text-xs text-muted-foreground -mt-2">Select which infrastructure to provision for this service.</p>
+              <div className="space-y-2">
+                {([
+                  { key: "github", label: "GitHub repository", desc: "Create repo, push template, add topic" },
+                  { key: "terraform", label: "Terraform Cloud workspace", desc: "Create workspace + namespace variables" },
+                  { key: "vault", label: "Vault secrets", desc: "Enable KV mount, ACL policy, AppRole" },
+                ] as const).map(({ key, label, desc }) => {
+                  const checked = provisioning.includes(key);
+                  return (
+                    <label
+                      key={key}
+                      className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
+                        checked
+                          ? "border-primary bg-primary/5"
+                          : "border-input bg-background hover:border-primary/30"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          setProvisioning((prev) =>
+                            prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+                          )
+                        }
+                        className="mt-0.5 h-4 w-4 rounded border-input text-primary focus:ring-primary"
+                      />
+                      <div>
+                        <span className="text-sm font-medium">{label}</span>
+                        <p className="text-[11px] text-muted-foreground">{desc}</p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+              {provisioning.includes("github") && (
+                <label className="flex items-center gap-2 ml-7 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={enableBranchProtection}
+                    onChange={(e) => setEnableBranchProtection(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-input text-primary focus:ring-primary"
+                  />
+                  <span className="text-xs text-muted-foreground">Enable branch protection (requires admin permissions on repo)</span>
+                </label>
+              )}
             </div>
 
             <div className="space-y-1.5">
