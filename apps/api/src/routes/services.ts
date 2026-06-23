@@ -94,6 +94,49 @@ export async function serviceRoutes(app: FastifyInstance) {
     return getTemplates();
   });
 
+  app.get("/preview", async (request) => {
+    const query = request.query as Record<string, string | undefined>;
+    const name = query.name ?? "my-service";
+    const slug = name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+    const provisioning = query.provisioning
+      ? query.provisioning.split(",").filter((s): s is "github" | "terraform" | "vault" => ["github", "terraform", "vault"].includes(s))
+      : ["github", "terraform", "vault"];
+    const enableBranchProtection = query.enableBranchProtection !== "false";
+    const template = query.template;
+
+    const templates = getTemplates();
+    const tpl = template ? templates.find((t) => t.id === template) : null;
+
+    return {
+      slug,
+      github: {
+        willProvision: provisioning.includes("github"),
+        org: env.GITHUB_ORG || "(not configured)",
+        repo: slug,
+        template: template || tpl?.name || "(none)",
+        enableBranchProtection,
+        willCreateRepo: provisioning.includes("github") && !!env.GITHUB_TOKEN && !!env.GITHUB_ORG,
+        willPushTemplate: provisioning.includes("github") && !!env.GITHUB_TOKEN && !!template,
+        willAddTopic: provisioning.includes("github") && !!env.GITHUB_TOKEN,
+        notes: !env.GITHUB_TOKEN ? "GITHUB_TOKEN not configured — will skip" : null,
+      },
+      terraform: {
+        willProvision: provisioning.includes("terraform"),
+        org: env.TERRAFORM_ORG || "(not configured)",
+        workspace: `infraena-${slug}`,
+        willCreate: provisioning.includes("terraform") && !!env.TERRAFORM_CLOUD_TOKEN && !!env.TERRAFORM_ORG,
+        notes: !env.TERRAFORM_CLOUD_TOKEN || !env.TERRAFORM_ORG ? "TERRAFORM_CLOUD_TOKEN or TERRAFORM_ORG not configured — will skip" : null,
+      },
+      vault: {
+        willProvision: provisioning.includes("vault"),
+        mountPath: `services/${slug}`,
+        policyName: `infraena-${slug}`,
+        willEnable: provisioning.includes("vault") && !!env.VAULT_ADDR && !!env.VAULT_TOKEN,
+        notes: !env.VAULT_ADDR || !env.VAULT_TOKEN ? "VAULT_ADDR or VAULT_TOKEN not configured — will skip" : null,
+      },
+    };
+  });
+
   app.get("/", async (request) => {
     const query = request.query as Record<string, string | string[] | undefined>;
     const team = typeof query.team === "string" ? query.team : undefined;
@@ -672,6 +715,94 @@ export async function serviceRoutes(app: FastifyInstance) {
     return reply.status(201).send({ message: "Provisioning started", provisioned: newSteps });
   });
 
+  app.get("/:slug/dependencies", async (request, reply) => {
+    const { slug } = request.params as { slug: string };
+    const service = await prisma.service.findUnique({ where: { slug } });
+    if (!service) {
+      return reply.status(404).send({ error: "Service not found" });
+    }
+
+    const [dependsOn, dependedOnBy] = await Promise.all([
+      prisma.serviceDependency.findMany({
+        where: { sourceServiceId: service.id },
+        include: { targetService: { select: { id: true, name: true, slug: true } } },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.serviceDependency.findMany({
+        where: { targetServiceId: service.id },
+        include: { sourceService: { select: { id: true, name: true, slug: true } } },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+
+    return { dependsOn, dependedOnBy };
+  });
+
+  app.post("/:slug/dependencies", { preHandler: [authMiddleware] }, async (request, reply) => {
+    const { slug } = request.params as { slug: string };
+    const body = (request.body ?? {}) as {
+      targetSlug: string;
+      type?: string;
+      label?: string;
+    };
+
+    const service = await prisma.service.findUnique({ where: { slug } });
+    if (!service) {
+      return reply.status(404).send({ error: "Service not found" });
+    }
+
+    const target = await prisma.service.findUnique({
+      where: { slug: body.targetSlug },
+    });
+    if (!target) {
+      return reply.status(404).send({ error: "Target service not found" });
+    }
+
+    if (service.id === target.id) {
+      return reply.status(400).send({ error: "A service cannot depend on itself" });
+    }
+
+    const existing = await prisma.serviceDependency.findFirst({
+      where: { sourceServiceId: service.id, targetServiceId: target.id },
+    });
+    if (existing) {
+      return reply.status(409).send({ error: "Dependency already exists" });
+    }
+
+    const dep = await prisma.serviceDependency.create({
+      data: {
+        sourceServiceId: service.id,
+        targetServiceId: target.id,
+        type: body.type ?? "api",
+        label: body.label ?? null,
+      },
+      include: {
+        targetService: { select: { id: true, name: true, slug: true } },
+      },
+    });
+
+    return reply.status(201).send(dep);
+  });
+
+  app.delete("/:slug/dependencies/:id", { preHandler: [authMiddleware] }, async (request, reply) => {
+    const { slug, id } = request.params as { slug: string; id: string };
+
+    const service = await prisma.service.findUnique({ where: { slug } });
+    if (!service) {
+      return reply.status(404).send({ error: "Service not found" });
+    }
+
+    const dep = await prisma.serviceDependency.findFirst({
+      where: { id, sourceServiceId: service.id },
+    });
+    if (!dep) {
+      return reply.status(404).send({ error: "Dependency not found" });
+    }
+
+    await prisma.serviceDependency.delete({ where: { id } });
+    return { success: true };
+  });
+
   app.delete("/:slug", { preHandler: [authMiddleware] }, async (request, reply) => {
     const { slug } = request.params as { slug: string };
 
@@ -681,6 +812,7 @@ export async function serviceRoutes(app: FastifyInstance) {
     }
 
     await deleteGitHubRepo(service.githubRepoUrl);
+    await prisma.serviceDependency.deleteMany({ where: { OR: [{ sourceServiceId: service.id }, { targetServiceId: service.id }] } });
     await prisma.provisionJob.deleteMany({ where: { serviceId: service.id } });
     await prisma.deployment.deleteMany({ where: { serviceId: service.id } });
     await prisma.service.delete({ where: { id: service.id } });

@@ -50,10 +50,25 @@ model Service {
   status        String           @default("provisioning")
   createdAt     DateTime         @default(now()) @map("created_at")
   updatedAt     DateTime         @updatedAt @map("updated_at")
-  provisionJobs ProvisionJob[]
-  deployments   Deployment[]
+  provisionJobs     ProvisionJob[]
+  deployments       Deployment[]
+  dependsOn         ServiceDependency[] @relation("SourceService")
+  dependedOnBy      ServiceDependency[] @relation("TargetService")
 
   @@map("services")
+}
+
+model ServiceDependency {
+  id              String   @id @default(uuid()) @db.Uuid
+  sourceServiceId String   @map("source_service_id") @db.Uuid
+  sourceService   Service  @relation("SourceService", fields: [sourceServiceId], references: [id])
+  targetServiceId String   @map("target_service_id") @db.Uuid
+  targetService   Service  @relation("TargetService", fields: [targetServiceId], references: [id])
+  type            String   @default("api")
+  label           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@map("service_dependencies")
 }
 
 model ProvisionJob {

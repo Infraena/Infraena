@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Service, ProvisionJob, Deployment } from "@idp/shared-types";
+import type { Service, ProvisionJob, Deployment, ServiceDependency } from "@idp/shared-types";
 import { api } from "@/lib/api";
 import { useProvisionLogs } from "@/lib/websocket";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -17,6 +17,7 @@ import {
   Trash2, ChevronLeft, ChevronRight, Copy, Check, Pencil, X, Bolt,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { toast } from "sonner";
 
 interface ActivityItem {
   id: string;
@@ -55,6 +56,12 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
   const [provisionBranchProtection, setProvisionBranchProtection] = useState(true);
   const [provisioning, setProvisioning] = useState(false);
   const [provisioningServiceId, setProvisioningServiceId] = useState<string | null>(null);
+  const [deps, setDeps] = useState<{ dependsOn: ServiceDependency[]; dependedOnBy: ServiceDependency[] }>({ dependsOn: [], dependedOnBy: [] });
+  const [showAddDep, setShowAddDep] = useState(false);
+  const [depTarget, setDepTarget] = useState("");
+  const [depSearch, setDepSearch] = useState("");
+  const [depSearchResults, setDepSearchResults] = useState<{ id: string; name: string; slug: string }[]>([]);
+  const [depAdding, setDepAdding] = useState(false);
 
   const provisionLogs = useProvisionLogs(provisioningServiceId);
 
@@ -73,6 +80,7 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
         setJobs(jobsData);
         setActivity(activityData);
         await loadDeployments(1);
+        await loadDeps();
       } catch {
         setService(null);
       } finally {
@@ -91,6 +99,46 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
     setDepPage(res.pagination.page);
     setDepTotalPages(res.pagination.totalPages);
   }
+
+  async function loadDeps() {
+    api.get<{ dependsOn: ServiceDependency[]; dependedOnBy: ServiceDependency[] }>(
+      `/api/services/${slug}/dependencies`
+    ).then(setDeps).catch(() => setDeps({ dependsOn: [], dependedOnBy: [] }));
+  }
+
+  const searchServices = async (query: string) => {
+    if (query.length < 2) { setDepSearchResults([]); return; }
+    setDepSearch(query);
+    try {
+      const res = await api.get<{ data: { id: string; name: string; slug: string }[] }>(`/api/services?limit=10`);
+      setDepSearchResults(
+        (res.data ?? []).filter((s) => s.slug !== slug && s.name.toLowerCase().includes(query.toLowerCase()))
+      );
+    } catch {}
+  };
+
+  const addDependency = async (targetSlug: string) => {
+    if (!service) return;
+    setDepAdding(true);
+    try {
+      await api.post(`/api/services/${service.slug}/dependencies`, { targetSlug });
+      await loadDeps();
+      setShowAddDep(false);
+      setDepTarget("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to add dependency");
+    } finally {
+      setDepAdding(false);
+    }
+  };
+
+  const removeDependency = async (depId: string) => {
+    if (!service) return;
+    try {
+      await api.delete(`/api/services/${service.slug}/dependencies/${depId}`);
+      await loadDeps();
+    } catch {}
+  };
 
   const handleDeploy = async () => {
     if (!service) return;
@@ -430,6 +478,88 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
                     </button>
                   </span>
                 </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm">Dependencies</CardTitle>
+                <button onClick={() => { setShowAddDep(!showAddDep); setDepSearch(""); setDepSearchResults([]); }} className="text-xs text-muted-foreground hover:text-foreground">
+                  {showAddDep ? "Cancel" : "+ Add"}
+                </button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3 text-xs">
+              {showAddDep && (
+                <div className="space-y-2">
+                  <Input
+                    value={depSearch}
+                    onChange={(e) => searchServices(e.target.value)}
+                    placeholder="Search services..."
+                    className="h-7 text-xs"
+                    autoFocus
+                  />
+                  {depSearchResults.length > 0 && (
+                    <div className="border rounded-md max-h-32 overflow-y-auto">
+                      {depSearchResults.map((s) => (
+                        <button
+                          key={s.id}
+                          onClick={() => addDependency(s.slug)}
+                          disabled={depAdding}
+                          className="w-full text-left px-2 py-1.5 hover:bg-secondary text-xs transition-colors"
+                        >
+                          {s.name} <span className="text-muted-foreground">{s.slug}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {depSearch.length >= 2 && depSearchResults.length === 0 && (
+                    <p className="text-muted-foreground">No services found</p>
+                  )}
+                </div>
+              )}
+              {deps.dependsOn.length === 0 && deps.dependedOnBy.length === 0 ? (
+                <p className="text-muted-foreground">No dependencies defined</p>
+              ) : (
+                <>
+                  {deps.dependsOn.length > 0 && (
+                    <div>
+                      <p className="text-[10px] uppercase text-muted-foreground font-semibold mb-1">Depends on</p>
+                      <div className="space-y-1">
+                        {deps.dependsOn.map((d) => (
+                          <div key={d.id} className="flex items-center justify-between group">
+                            <button onClick={() => onNavigate(`/services/${d.targetService?.slug}`)} className="text-primary hover:underline text-left">
+                              {d.targetService?.name ?? d.targetServiceId}
+                            </button>
+                            <div className="flex items-center gap-1">
+                              <Badge variant="secondary" className="text-[8px]">{d.type}</Badge>
+                              <button onClick={() => removeDependency(d.id)} className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity">
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {deps.dependedOnBy.length > 0 && (
+                    <div>
+                      <p className="text-[10px] uppercase text-muted-foreground font-semibold mb-1">Depended on by</p>
+                      <div className="space-y-1">
+                        {deps.dependedOnBy.map((d) => (
+                          <div key={d.id} className="flex items-center justify-between">
+                            <button onClick={() => onNavigate(`/services/${d.sourceService?.slug}`)} className="text-primary hover:underline text-left">
+                              {d.sourceService?.name ?? d.sourceServiceId}
+                            </button>
+                            <Badge variant="secondary" className="text-[8px]">{d.type}</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>

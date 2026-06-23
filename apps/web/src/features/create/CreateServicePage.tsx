@@ -27,6 +27,9 @@ import {
   Loader2,
   Box,
   ExternalLink,
+  Github,
+  Server,
+  Key,
 } from "lucide-react";
 
 const categoryKeys = Object.keys(CATEGORIES) as ServiceCategory[];
@@ -85,7 +88,7 @@ const languageLabels: Record<string, string> = {
 };
 
 export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) => void }) {
-  const [step, setStep] = useState<"form" | "provisioning" | "done">("form");
+  const [step, setStep] = useState<"form" | "review" | "provisioning" | "done">("form");
   const [serviceId, setServiceId] = useState<string | null>(null);
   const [result, setResult] = useState<Service | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -94,6 +97,7 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
   const [error, setError] = useState<string | null>(null);
   const [provisioning, setProvisioning] = useState<string[]>(["github", "terraform", "vault"]);
   const [enableBranchProtection, setEnableBranchProtection] = useState(true);
+  const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
 
   const logs = useProvisionLogs(serviceId);
 
@@ -124,12 +128,28 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
     setValue("category", firstLangCat, { shouldValidate: false });
   }, [watchedLangs, setValue]);
 
-  const onSubmit = async (data: FormData) => {
+  const loadPreview = async (data: FormData) => {
+    setError(null);
+    try {
+      const params = new URLSearchParams();
+      params.set("name", data.name);
+      params.set("teamId", data.teamId);
+      params.set("template", selectedTemplate ?? data.languages?.[0] ?? data.category);
+      params.set("provisioning", provisioning.join(","));
+      params.set("enableBranchProtection", String(enableBranchProtection));
+      const p = await api.get<Record<string, unknown>>(`/api/services/preview?${params.toString()}`);
+      setPreview(p);
+      setStep("review");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load preview");
+    }
+  };
+
+  const onConfirm = async () => {
     setError(null);
     setStep("provisioning");
-
+    const data = getValues();
     try {
-      console.log("[Infraena] Submitting with languages:", JSON.stringify(data.languages));
       const payload = {
         name: data.name,
         description: data.description,
@@ -285,6 +305,79 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
     );
   }
 
+  if (step === "review" && preview) {
+    const github = (preview as Record<string, unknown>).github as Record<string, unknown> | undefined;
+    const terraform = (preview as Record<string, unknown>).terraform as Record<string, unknown> | undefined;
+    const vault = (preview as Record<string, unknown>).vault as Record<string, unknown> | undefined;
+
+    return (
+      <div className="max-w-2xl mx-auto animate-fade-up">
+        <div className="mb-8">
+          <button onClick={() => setStep("form")} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4">
+            <ArrowLeft className="w-3.5 h-3.5" />Back to form
+          </button>
+          <h1 className="text-2xl font-semibold tracking-tight">Review</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            This is what will be provisioned for <strong>{String(preview.slug)}</strong>.
+          </p>
+        </div>
+
+        <div className="space-y-3 mb-6">
+          {Boolean(github?.["willProvision"]) && (
+            <Card className={github?.["willCreateRepo"] ? "border-emerald-200" : "border-amber-200"}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Github className="w-4 h-4" />GitHub
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs text-muted-foreground space-y-1">
+                <p>Repo: <span className="text-foreground font-mono">{String(github?.["org"])}/{String(github?.["repo"])}</span></p>
+                <p>Template: <span className="text-foreground">{String(github?.["template"])}</span></p>
+                <p>Branch protection: <span className={github?.["enableBranchProtection"] ? "text-emerald-600 font-medium" : "text-muted-foreground"}>{github?.["enableBranchProtection"] ? "Enabled" : "Disabled"}</span></p>
+                {Boolean(github?.["notes"]) && <p className="text-amber-600">{String(github?.["notes"])}</p>}
+              </CardContent>
+            </Card>
+          )}
+          {Boolean(terraform?.["willProvision"]) && (
+            <Card className={terraform?.["willCreate"] ? "border-emerald-200" : "border-amber-200"}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Server className="w-4 h-4" />Terraform Cloud
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs text-muted-foreground space-y-1">
+                <p>Workspace: <span className="text-foreground font-mono">{String(terraform?.["workspace"])}</span></p>
+                <p>Org: <span className="text-foreground">{String(terraform?.["org"])}</span></p>
+                {Boolean(terraform?.["notes"]) && <p className="text-amber-600">{String(terraform?.["notes"])}</p>}
+              </CardContent>
+            </Card>
+          )}
+          {Boolean(vault?.["willProvision"]) && (
+            <Card className={vault?.["willEnable"] ? "border-emerald-200" : "border-amber-200"}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Key className="w-4 h-4" />HashiCorp Vault
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs text-muted-foreground space-y-1">
+                <p>Mount: <span className="text-foreground font-mono">{String(vault?.["mountPath"])}</span></p>
+                <p>Policy: <span className="text-foreground font-mono">{String(vault?.["policyName"])}</span></p>
+                {Boolean(vault?.["notes"]) && <p className="text-amber-600">{String(vault?.["notes"])}</p>}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => setStep("form")}>Back</Button>
+          <Button size="sm" onClick={onConfirm} className="gap-1.5">
+            Confirm & create <ArrowRight className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-2xl mx-auto animate-fade-up">
       <div className="mb-8">
@@ -308,7 +401,7 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
       )}
 
       <Card>
-        <form onSubmit={handleSubmit(onSubmit)}>
+        <form onSubmit={handleSubmit(loadPreview)}>
           <CardContent className="pt-6 space-y-5">
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Name</label>
@@ -473,7 +566,7 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
               {isSubmitting ? (
                 <><Loader2 className="w-4 h-4 animate-spin" />Creating...</>
               ) : (
-                <>Create service<ArrowRight className="w-4 h-4" /></>
+                <>Review<ArrowRight className="w-4 h-4" /></>
               )}
             </Button>
           </CardFooter>

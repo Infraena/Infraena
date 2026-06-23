@@ -102,3 +102,16 @@ export interface ServiceReadyMessage {
   slug: string;
   repoUrl: string;
 }
+
+export type DependencyType = "api" | "database" | "event" | "config";
+
+export interface ServiceDependency {
+  id: string;
+  sourceServiceId: string;
+  targetServiceId: string;
+  sourceService?: { id: string; name: string; slug: string };
+  targetService?: { id: string; name: string; slug: string };
+  type: DependencyType;
+  label: string | null;
+  createdAt: string;
+}
