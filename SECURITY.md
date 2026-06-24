@@ -7,7 +7,7 @@ If you discover a security vulnerability, please **do not** open a public GitHub
 Instead, report it privately via:
 
 - Email: erickmark996@gmail.com
-- GitHub: [Security Advisories](https://github.com/ErickMark18/IDP-Platform/security/advisories/new)
+- GitHub: [Security Advisories](https://github.com/Infraena/Infraena/security/advisories/new)
 
 We will respond within 48 hours and work with you to verify and address the issue.
 

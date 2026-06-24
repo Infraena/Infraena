@@ -1,7 +1,7 @@
 # Infraena
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![CI](https://img.shields.io/badge/CI-passing-brightgreen)](https://github.com/ErickMark18/IDP-Platform/actions)
+[![CI](https://github.com/Infraena/Infraena/actions/workflows/ci.yml/badge.svg)](https://github.com/Infraena/Infraena/actions)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5-blue)](https://www.typescriptlang.org/)
 [![Fastify](https://img.shields.io/badge/Fastify-5.2-000000)](https://fastify.dev/)
 [![React](https://img.shields.io/badge/React-18-61DAFB)](https://react.dev/)
@@ -15,8 +15,8 @@ from a web interface, without touching Terraform or kubectl.
 ## Quickstart
 
 ```bash
-git clone https://github.com/ErickMark18/IDP-Platform.git
-cd IDP-Platform
+git clone https://github.com/Infraena/Infraena.git
+cd Infraena
 ./setup.sh    # Start PostgreSQL, Redis, Vault via Docker. Install deps. Run migrations.
 pnpm dev      # API :8080 + Web :3000
 ```
