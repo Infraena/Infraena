@@ -51,7 +51,7 @@ await app.register(swagger, {
         cookieAuth: {
           type: "apiKey",
           in: "cookie",
-          name: "idp_token",
+          name: "infraena_token",
         },
       },
     },

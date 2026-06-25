@@ -37,7 +37,7 @@ banner
 echo -e "${BOLD}Step 1/5: Checking prerequisites...${RESET}"
 FAIL=0
 check_prereq node "Node.js >= 20" || FAIL=1
-check_prereq pnpm "pnpm >= 9" || FAIL=1
+check_prereq pnpm "pnpm >= 11" || FAIL=1
 
 # Docker: try both the macOS Docker path and system path
 if /Applications/Docker.app/Contents/Resources/bin/docker info &>/dev/null 2>&1; then
@@ -76,7 +76,7 @@ if [ ! -f apps/api/.env ]; then
   else
     cat > apps/api/.env << 'DOTENV'
 # Required
-DATABASE_URL=postgresql://idp:idp@localhost:5433/idp
+DATABASE_URL=postgresql://infraena:infraena@localhost:5433/infraena
 REDIS_URL=redis://localhost:6379
 VAULT_ADDR=http://localhost:8200
 VAULT_TOKEN=root

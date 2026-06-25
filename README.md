@@ -27,13 +27,25 @@ your GitHub OAuth credentials to log in and create services.
 
 ## Features
 
-- **Service catalog** — browse all services with filters by stack, team and
-  status. Column sorting, status counters, card/table view, multi-select
-  and bulk delete.
+- **Service catalog** — browse all services with filters by language, status,
+  team and category. Column sorting, status counters, card/table view,
+  multi-select and bulk delete.
 - **Self-service creation** — wizard that provisions infrastructure in
-  minutes. Multi-category language selection with per-stack badges.
+  minutes. Multi-category language selection with per-stack badges. Dry-run
+  preview shows exactly what will be created before confirming.
+- **Modular provisioning** — choose which workers to run (GitHub, Terraform,
+  Vault) per service. Re-provision missing or failed steps later.
+- **Import existing repos** — bring your own GitHub repos into the platform
+  with full provisioning applied retroactively.
 - **Service detail** — inline editing of name and description, activity
   timeline, paginated deployments panel, health indicator, copy to clipboard.
+- **Dependency graph** — define and visualize which services consume or are
+  consumed by others, with autocomplete search.
+- **Repository access management** — grant or revoke GitHub collaborator
+  access per team member, independently of team membership.
+- **Setup wizard** — health check for all 7 connections (PostgreSQL, Redis,
+  Vault, GitHub API, GitHub OAuth, Terraform Cloud, Argo CD) before creating
+  services.
 - **Real-time progress** — WebSocket logs for every provisioning step.
 - **GitHub OAuth** — log in with your GitHub account.
 - **Async provisioning** (3 background workers):
@@ -86,7 +98,7 @@ your GitHub OAuth credentials to log in and create services.
 
 ## Prerequisites
 
-- Node.js >= 20 · pnpm >= 9 · Docker Desktop
+- Node.js >= 20 · pnpm >= 11 · Docker Desktop
 
 ## Environment variables
 
@@ -94,7 +106,7 @@ Edit `apps/api/.env` with your credentials (created automatically by `./setup.sh
 
 ```bash
 # Required
-DATABASE_URL=postgresql://idp:idp@localhost:5433/idp
+DATABASE_URL=postgresql://infraena:infraena@localhost:5433/infraena
 REDIS_URL=redis://localhost:6379
 VAULT_ADDR=http://localhost:8200
 VAULT_TOKEN=root
@@ -138,24 +150,31 @@ the database.
 | Method | Route | Description |
 |--------|-------|-------------|
 | GET | `/auth/github` | Redirect to GitHub OAuth |
-| GET | `/auth/github/callback` | Exchange code for JWT, set `idp_token` cookie |
+| GET | `/auth/github/callback` | Exchange code for JWT, set `infraena_token` cookie |
 | GET | `/auth/me` | Return authenticated user or 401 |
 | POST | `/auth/logout` | Clear cookie |
 
 ### Services
 | Method | Route | Description |
 |--------|-------|-------------|
-| GET | `/api/services` | List services (filters: `?status=&language=&team=&sort=&order=&page=&limit=`) |
+| GET | `/api/services` | List with filters: `?status=&language=&team=&category=&sort=&order=&page=&limit=` |
+| GET | `/api/services/templates` | List available project templates |
+| GET | `/api/services/preview` | Dry-run preview: `?name=&template=&provisioning=&enableBranchProtection=` |
 | POST | `/api/services` | Create service, enqueue 3 workers |
-| PATCH | `/api/services/:slug` | Edit name and/or description |
+| POST | `/api/services/import` | Import existing GitHub repo `{ repoUrl, teamId, provisioning?, enableBranchProtection? }` |
+| POST | `/api/services/bulk-delete` | Bulk delete `{ ids: [...] }` with repo cleanup |
 | GET | `/api/services/:slug` | Detail with team, owner, jobs, deployments |
+| PATCH | `/api/services/:slug` | Edit name and/or description |
+| DELETE | `/api/services/:slug` | Delete service, jobs, deployments, and GitHub repo |
 | GET | `/api/services/:slug/activity` | Unified timeline of jobs + deployments |
 | GET | `/api/services/:slug/jobs` | Provisioning job logs |
 | GET | `/api/services/:slug/deployments` | Paginated deployment history (`?page=&limit=`) |
 | POST | `/api/services/:slug/deploy` | Register new deployment + Argo CD sync if configured |
 | POST | `/api/services/:slug/sync` | Manual Argo CD sync |
-| DELETE | `/api/services/:slug` | Delete service, jobs, deployments, and GitHub repo |
-| POST | `/api/services/bulk-delete` | Bulk delete `{ ids: [...] }` with repo cleanup |
+| POST | `/api/services/:slug/provision` | Re-provision missing or failed steps `{ steps?: [...], enableBranchProtection? }` |
+| GET | `/api/services/:slug/dependencies` | Get dependency graph (`dependsOn` + `dependedOnBy`) |
+| POST | `/api/services/:slug/dependencies` | Add dependency `{ targetSlug, type?, label? }` |
+| DELETE | `/api/services/:slug/dependencies/:id` | Remove dependency |
 
 ### Teams
 | Method | Route | Description |
@@ -166,11 +185,14 @@ the database.
 | GET | `/api/teams/:slug` | Detail with users, services, counts |
 | POST | `/api/teams/:slug/members` | Add member. Optional `grantRepoAccess: true` adds GitHub collaborator. |
 | DELETE | `/api/teams/:slug/members/:userId` | Remove member from team |
+| POST | `/api/teams/:slug/repo-access` | Grant repo collaborator access `{ username }` |
+| DELETE | `/api/teams/:slug/repo-access/:userId` | Revoke repo collaborator access |
 | DELETE | `/api/teams/:slug` | Delete team (only if empty) |
 
 ### Other
 | Method | Route | Description |
 |--------|-------|-------------|
+| GET | `/api/setup/check` | Health check for all 7 connections |
 | GET | `/health` | Health check |
 | GET | `/metrics` | Prometheus metrics |
 

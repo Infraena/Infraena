@@ -37,7 +37,7 @@ async function api(path, options = {}) {
 async function login() {
   // If no token, tell user to get one from the web UI
   console.log(color("yellow", "No authentication token found."));
-  console.log("Login via the web UI and copy your JWT from the browser cookies (idp_token).");
+  console.log("Login via the web UI and copy your JWT from the browser cookies (infraena_token).");
   console.log(`Then run: ${color("cyan", "idp login <token>")}`);
   console.log(`Or set:  ${color("cyan", "export IDP_TOKEN=<token>")}\n`);
 }

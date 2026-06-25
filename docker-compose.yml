@@ -4,13 +4,13 @@ services:
     ports:
       - "5433:5432"
     environment:
-      POSTGRES_DB: idp
-      POSTGRES_USER: idp
-      POSTGRES_PASSWORD: idp
+      POSTGRES_DB: infraena
+      POSTGRES_USER: infraena
+      POSTGRES_PASSWORD: infraena
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U idp -d idp"]
+      test: ["CMD-SHELL", "pg_isready -U infraena -d infraena"]
       interval: 5s
       timeout: 5s
       retries: 5

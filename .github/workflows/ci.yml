@@ -48,9 +48,9 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: idp_test
-          POSTGRES_USER: idp
-          POSTGRES_PASSWORD: idp
+          POSTGRES_DB: infraena_test
+          POSTGRES_USER: infraena
+          POSTGRES_PASSWORD: infraena
         ports:
           - 5432:5432
         options: >-
@@ -68,7 +68,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      DATABASE_URL: postgresql://idp:idp@localhost:5432/idp_test
+      DATABASE_URL: postgresql://infraena:infraena@localhost:5432/infraena_test
       REDIS_URL: redis://localhost:6379
       VAULT_ADDR: http://localhost:8200
       VAULT_TOKEN: root
@@ -86,7 +86,7 @@ jobs:
       - name: Create .env for tests
         run: |
           cat > apps/api/.env << 'ENVEOF'
-          DATABASE_URL=postgresql://idp:idp@localhost:5432/idp_test
+          DATABASE_URL=postgresql://infraena:infraena@localhost:5432/infraena_test
           REDIS_URL=redis://localhost:6379
           VAULT_ADDR=http://localhost:8200
           VAULT_TOKEN=root

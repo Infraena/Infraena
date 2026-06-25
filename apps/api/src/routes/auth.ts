@@ -124,7 +124,7 @@ export async function authRoutes(app: FastifyInstance) {
         role: user.role,
       });
 
-      reply.setCookie("idp_token", token, {
+      reply.setCookie("infraena_token", token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
@@ -143,7 +143,7 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.get("/me", async (request, reply) => {
     const token =
-      request.cookies.idp_token ??
+      request.cookies.infraena_token ??
       request.headers.authorization?.replace("Bearer ", "");
 
     if (!token) {
@@ -168,7 +168,7 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.post("/logout", async (_request, reply) => {
-    reply.clearCookie("idp_token", { path: "/" });
+    reply.clearCookie("infraena_token", { path: "/" });
     return { success: true };
   });
 }

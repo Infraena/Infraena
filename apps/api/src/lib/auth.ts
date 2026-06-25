@@ -19,7 +19,7 @@ export async function authMiddleware(
   reply: FastifyReply
 ) {
   const token =
-    request.cookies.idp_token ??
+    request.cookies.infraena_token ??
     request.headers.authorization?.replace("Bearer ", "");
 
   if (!token) {
