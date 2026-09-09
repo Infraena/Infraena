@@ -144,3 +144,50 @@ export interface ServiceDependency {
   label: string | null;
   createdAt: string;
 }
+
+export type WebhookDirection = "inbound" | "outbound";
+export type WebhookKind = "generic" | "slack" | "discord";
+export type WebhookDeliveryStatus = "received" | "delivered" | "failed";
+
+export const WEBHOOK_EVENTS = [
+  "service.ready",
+  "service.failed",
+  "service.provisioning.step.failed",
+  "deployment.started",
+  "deployment.finished",
+  "health.unhealthy",
+  "health.recovered",
+  "webhook.received",
+] as const;
+
+export type WebhookEventName = (typeof WEBHOOK_EVENTS)[number];
+
+export interface Webhook {
+  id: string;
+  serviceId: string;
+  direction: WebhookDirection;
+  kind: WebhookKind;
+  url: string | null;
+  token: string | null;
+  enabled: boolean;
+  events: string[];
+  createdAt: string;
+}
+
+export interface WebhookEvent {
+  id: string;
+  webhookId: string | null;
+  serviceId: string;
+  direction: WebhookDirection;
+  event: string;
+  status: WebhookDeliveryStatus;
+  error: string | null;
+  createdAt: string;
+}
+
+export interface WebhookEventMessage {
+  serviceId: string;
+  event: string;
+  message: string;
+  receivedAt: string;
+}
