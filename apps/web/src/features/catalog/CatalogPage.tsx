@@ -7,6 +7,7 @@ import { api } from "@/lib/api";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StackBadge } from "@/components/StackBadge";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { SetupIncompleteBanner } from "./SetupIncompleteBanner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
@@ -209,6 +210,7 @@ export function CatalogPage({ onNavigate }: { onNavigate: (path: string) => void
 
   return (
     <div className="animate-fade-up">
+      <SetupIncompleteBanner onNavigate={onNavigate} />
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Services</h1>
