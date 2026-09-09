@@ -364,6 +364,112 @@ describe("Services", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  describe("Service health endpoints", () => {
+    beforeAll(() => {
+      const realFetch = globalThis.fetch;
+      vi.stubGlobal(
+        "fetch",
+        (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = String(input);
+          if (url.startsWith(baseUrl)) {
+            return realFetch(input, init);
+          }
+          if (url.includes("health.example/ok")) {
+            return new Response(null, { status: 200 });
+          }
+          if (url.includes("health.example/bad")) {
+            return new Response(null, { status: 503 });
+          }
+          return new Response(JSON.stringify({}), {
+            status: 500,
+            headers: { "content-type": "application/json" },
+          });
+        }) as typeof fetch
+      );
+    });
+
+    afterAll(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("PATCH sets a valid healthUrl and GET detail returns health fields", async () => {
+      const patchRes = await fetch(`${baseUrl}/api/services/${serviceSlug}`, {
+        method: "PATCH",
+        headers: authHeaders(),
+        body: JSON.stringify({ healthUrl: "https://health.example/ok" }),
+      });
+      expect(patchRes.status).toBe(200);
+      const patchData = await patchRes.json();
+      expect(patchData.data.healthUrl).toBe("https://health.example/ok");
+      expect(patchData.data.healthStatus).toBe("unknown");
+
+      const detailRes = await fetch(`${baseUrl}/api/services/${serviceSlug}`);
+      const detailData = await detailRes.json();
+      expect(detailData.healthUrl).toBe("https://health.example/ok");
+      expect(detailData.healthStatus).toBe("unknown");
+      expect(detailData).toHaveProperty("healthDetail");
+      expect(detailData).toHaveProperty("healthLatencyMs");
+      expect(detailData).toHaveProperty("lastHealthCheckAt");
+    });
+
+    it("PATCH rejects an invalid healthUrl", async () => {
+      const res = await fetch(`${baseUrl}/api/services/${serviceSlug}`, {
+        method: "PATCH",
+        headers: authHeaders(),
+        body: JSON.stringify({ healthUrl: "ftp://example.com" }),
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it("POST health/check returns healthy and persists", async () => {
+      const res = await fetch(`${baseUrl}/api/services/${serviceSlug}/health/check`, {
+        method: "POST",
+        headers: authHeadersNoBody(),
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+      expect(data.data.status).toBe("healthy");
+      expect(typeof data.data.latencyMs).toBe("number");
+      expect(data.data.persisted).toBe(true);
+    });
+
+    it("POST health/check returns unhealthy on 5xx", async () => {
+      await fetch(`${baseUrl}/api/services/${serviceSlug}`, {
+        method: "PATCH",
+        headers: authHeaders(),
+        body: JSON.stringify({ healthUrl: "https://health.example/bad" }),
+      });
+      const res = await fetch(`${baseUrl}/api/services/${serviceSlug}/health/check`, {
+        method: "POST",
+        headers: authHeadersNoBody(),
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.data.status).toBe("unhealthy");
+      expect(data.data.detail).toContain("503");
+    });
+
+    it("POST health/check returns 400 when healthUrl is cleared", async () => {
+      const patchRes = await fetch(`${baseUrl}/api/services/${serviceSlug}`, {
+        method: "PATCH",
+        headers: authHeaders(),
+        body: JSON.stringify({ healthUrl: null }),
+      });
+      expect(patchRes.status).toBe(200);
+      expect(patchRes.status).toBe(200);
+      const patchData = await patchRes.json();
+      expect(patchData.data.healthUrl).toBeNull();
+      expect(patchData.data.healthStatus).toBe("unknown");
+
+      const res = await fetch(`${baseUrl}/api/services/${serviceSlug}/health/check`, {
+        method: "POST",
+        headers: authHeadersNoBody(),
+      });
+      expect(res.status).toBe(400);
+    });
+  });
 });
 
 describe("Dependencies", () => {

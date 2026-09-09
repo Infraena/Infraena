@@ -37,6 +37,12 @@ export const activeWebSocketConnections = new Gauge({
   help: "Number of active WebSocket connections",
 });
 
+export const healthChecksTotal = new Counter({
+  name: "idp_health_checks_total",
+  help: "Total number of health checks performed",
+  labelNames: ["status", "source"] as const,
+});
+
 export function recordProvisionJob(type: string, durationMs: number) {
   const seconds = durationMs / 1000;
   provisionJobDurationSeconds.observe({ type }, seconds);

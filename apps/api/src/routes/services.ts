@@ -8,6 +8,8 @@ import { prisma } from "../db/prisma.js";
 import { env } from "../lib/env.js";
 import { githubQueue, terraformQueue, vaultQueue } from "../lib/queue.js";
 import { authMiddleware, getUser } from "../lib/auth.js";
+import { isHealthUrlAllowed, performHealthCheck } from "../lib/health.js";
+import { triggerAppSync } from "../lib/argo.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const templatesPath = join(__dirname, "..", "..", "..", "..", "templates", "index.json");
@@ -25,24 +27,6 @@ function getTemplates() {
     templatesCache = [];
   }
   return templatesCache ?? [];
-}
-
-async function syncArgoCDApp(appName: string): Promise<string | null> {
-  if (!env.ARGOCD_URL || !env.ARGOCD_TOKEN) return null;
-  try {
-    const url = `${env.ARGOCD_URL.replace(/\/$/, "")}/api/v1/applications/${appName}/sync`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${env.ARGOCD_TOKEN}`, "Content-Type": "application/json" },
-    });
-    if (!res.ok) {
-      const err = await res.text();
-      return `Argo CD sync failed: ${err.slice(0, 200)}`;
-    }
-    return `Argo CD sync triggered for ${appName}`;
-  } catch (err) {
-    return `Argo CD sync error: ${err instanceof Error ? err.message : "unknown"}`;
-  }
 }
 
 async function deleteGitHubRepo(url: string | null) {
@@ -91,6 +75,14 @@ const importServiceSchema = z.object({
   teamId: z.string().uuid(),
   provisioning: z.array(z.enum(["github", "terraform", "vault"])).optional(),
   enableBranchProtection: z.boolean().optional(),
+});
+
+const patchServiceSchema = z.object({
+  name: z.string().min(3).max(40).regex(/^[a-z][a-z0-9-]*$/, "Only lowercase, numbers and hyphens").optional(),
+  description: z.string().max(200).nullable().optional(),
+  healthUrl: z
+    .union([z.string().max(500).refine(isHealthUrlAllowed, "Must be an http(s) URL"), z.null()])
+    .optional(),
 });
 
 export async function serviceRoutes(app: FastifyInstance) {
@@ -513,43 +505,67 @@ export async function serviceRoutes(app: FastifyInstance) {
       },
     });
 
-    const syncResult = await syncArgoCDApp(`infraena-${service.slug}`);
+    const sync = await triggerAppSync(`infraena-${service.slug}`);
 
-    const finalStatus = syncResult === null
-      ? "running"
-      : syncResult.startsWith("Argo CD sync triggered")
-        ? "success"
-        : "failed";
+    let finalStatus: "running" | "failed" = "running";
+    let message: string | null = sync.ok ? "Sync triggered — awaiting Argo CD" : sync.message;
 
-    if (finalStatus !== "running") {
-      await prisma.deployment.update({
-        where: { id: deployment.id },
-        data: { status: finalStatus },
-      });
+    if (!sync.configured) {
+      message = "Argo CD not configured — sync skipped (record only)";
+    } else if (!sync.ok) {
+      finalStatus = "failed";
     }
 
-    return reply.status(201).send({ success: true, data: { ...deployment, status: finalStatus, syncResult } });
+    const data: { status?: string; message?: string | null; finishedAt?: Date } = { message };
+    if (finalStatus === "failed") {
+      data.status = "failed";
+      data.finishedAt = new Date();
+    }
+    await prisma.deployment.update({ where: { id: deployment.id }, data });
+
+    return reply.status(201).send({
+      success: true,
+      data: {
+        ...deployment,
+        status: finalStatus,
+        message,
+        syncResult: sync.message,
+        argocdConfigured: sync.configured,
+      },
+    });
   });
 
   app.patch("/:slug", { preHandler: [authMiddleware] }, async (request, reply) => {
     const { slug } = request.params as { slug: string };
-    const body = (request.body ?? {}) as {
-      name?: string;
-      description?: string | null;
-    };
 
     const service = await prisma.service.findUnique({ where: { slug } });
     if (!service) {
       return reply.status(404).send({ error: "Service not found" });
     }
 
-    const data: Record<string, unknown> = {};
-    if (typeof body.name === "string" && body.name.length >= 3 && /^[a-z][a-z0-9-]*$/.test(body.name)) {
-      data.name = body.name;
-      data.slug = body.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+    const parseResult = patchServiceSchema.safeParse(request.body);
+    if (!parseResult.success) {
+      return reply.status(400).send({ error: parseResult.error.flatten().fieldErrors });
     }
-    if (body.description !== undefined) {
-      data.description = body.description;
+    const { name, description, healthUrl } = parseResult.data;
+
+    const data: Record<string, unknown> = {};
+    if (name !== undefined) {
+      data.name = name;
+      data.slug = name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+    }
+    if (description !== undefined) {
+      data.description = description;
+    }
+    if (healthUrl !== undefined) {
+      data.healthUrl = healthUrl;
+      const urlChanged = (service.healthUrl ?? null) !== (healthUrl ?? null);
+      if (healthUrl === null || urlChanged) {
+        data.healthStatus = "unknown";
+        data.healthDetail = null;
+        data.healthLatencyMs = null;
+        data.lastHealthCheckAt = null;
+      }
     }
 
     if (Object.keys(data).length === 0) {
@@ -563,6 +579,25 @@ export async function serviceRoutes(app: FastifyInstance) {
     });
 
     return { success: true, data: updated };
+  });
+
+  app.post("/:slug/health/check", { preHandler: [authMiddleware] }, async (request, reply) => {
+    const { slug } = request.params as { slug: string };
+
+    const service = await prisma.service.findUnique({
+      where: { slug },
+      select: { id: true, healthUrl: true },
+    });
+    if (!service) {
+      return reply.status(404).send({ error: "Service not found" });
+    }
+
+    const outcome = await performHealthCheck(service.id, "manual");
+    if (!outcome) {
+      return reply.status(400).send({ error: "No healthUrl configured — set one first" });
+    }
+
+    return { success: true, data: outcome };
   });
 
   app.get("/:slug/activity", async (request, reply) => {
@@ -639,9 +674,9 @@ export async function serviceRoutes(app: FastifyInstance) {
     }
 
     const appName = `infraena-${service.slug}`;
-    const result = await syncArgoCDApp(appName);
+    const sync = await triggerAppSync(appName);
 
-    return { success: true, app: appName, result };
+    return { success: true, app: appName, result: sync.message, argocdConfigured: sync.configured };
   });
 
   app.post("/:slug/provision", { preHandler: [authMiddleware] }, async (request, reply) => {

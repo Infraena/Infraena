@@ -31,6 +31,7 @@ export const CATEGORIES = {
 export type ServiceCategory = keyof typeof CATEGORIES;
 export type ServiceLanguage = (typeof CATEGORIES)[ServiceCategory][number];
 export type ServiceStatus = "provisioning" | "ready" | "failed" | "imported";
+export type HealthStatus = "unknown" | "healthy" | "unhealthy";
 export type ProvisioningStep = "github" | "terraform" | "vault";
 export type JobType = ProvisioningStep;
 export type JobStatus = "pending" | "running" | "success" | "failed";
@@ -49,6 +50,11 @@ export interface Service {
   githubRepoUrl: string | null;
   provisioning: ProvisioningStep[];
   status: ServiceStatus;
+  healthUrl: string | null;
+  healthStatus: HealthStatus;
+  healthDetail: string | null;
+  healthLatencyMs: number | null;
+  lastHealthCheckAt: string | null;
   createdAt: string;
   updatedAt: string;
   lastDeployment?: {
@@ -56,6 +62,8 @@ export interface Service {
     version: string;
     environment: string;
     status: string;
+    finishedAt: string | null;
+    message: string | null;
     createdAt: string;
   } | null;
 }
@@ -80,6 +88,8 @@ export interface Deployment {
   status: DeploymentStatus;
   triggeredById: string | null;
   argocdApp: string | null;
+  finishedAt: string | null;
+  message: string | null;
   createdAt: string;
 }
 
@@ -104,6 +114,22 @@ export interface ServiceReadyMessage {
   serviceId: string;
   slug: string;
   repoUrl: string;
+}
+
+export interface HealthUpdateMessage {
+  serviceId: string;
+  status: HealthStatus;
+  latencyMs: number | null;
+  detail: string | null;
+  checkedAt: string;
+}
+
+export interface DeploymentUpdateMessage {
+  serviceId: string;
+  deploymentId: string;
+  status: DeploymentStatus;
+  message: string | null;
+  finishedAt: string | null;
 }
 
 export type DependencyType = "api" | "database" | "event" | "config";

@@ -26,6 +26,7 @@ const DEMO_SERVICES = [
     githubRepoUrl: "https://github.com/example/demo-auth-api",
     provisioning: ["github", "terraform", "vault"],
     status: "ready",
+    healthUrl: "https://example.com",
     deployment: { version: "v1.2.0", environment: "staging" },
   },
   {
@@ -38,6 +39,7 @@ const DEMO_SERVICES = [
     githubRepoUrl: "https://github.com/example/demo-billing-api",
     provisioning: ["github", "terraform", "vault"],
     status: "ready",
+    healthUrl: "https://example.com",
     deployment: { version: "v0.9.1", environment: "production" },
   },
   {
@@ -50,6 +52,7 @@ const DEMO_SERVICES = [
     githubRepoUrl: "https://github.com/example/demo-web-app",
     provisioning: ["github"],
     status: "ready",
+    healthUrl: "https://example.com",
   },
   {
     name: "demo-user-db",
@@ -156,6 +159,7 @@ async function seed() {
         githubRepoUrl: svc.githubRepoUrl,
         provisioning: svc.provisioning,
         status: svc.status,
+        healthUrl: svc.healthUrl ?? null,
       },
     });
 

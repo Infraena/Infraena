@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import type { Service, ProvisionJob, Deployment, ServiceDependency } from "@infraena/shared-types";
 import { api } from "@/lib/api";
-import { useProvisionLogs } from "@/lib/websocket";
+import { useProvisionLogs, useDeploymentUpdates } from "@/lib/websocket";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StackBadge } from "@/components/StackBadge";
 import { LogTerminal } from "@/components/LogTerminal";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { HealthCard } from "./HealthCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -64,6 +65,19 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
   const [depAdding, setDepAdding] = useState(false);
 
   const provisionLogs = useProvisionLogs(provisioningServiceId);
+  const deploymentUpdate = useDeploymentUpdates(service?.id ?? null);
+
+  useEffect(() => {
+    if (!deploymentUpdate || !service) return;
+    setDeployments((prev) =>
+      prev.map((d) =>
+        d.id === deploymentUpdate.deploymentId
+          ? { ...d, status: deploymentUpdate.status, message: deploymentUpdate.message, finishedAt: deploymentUpdate.finishedAt }
+          : d
+      )
+    );
+    api.get<ActivityItem[]>(`/api/services/${slug}/activity`).then(setActivity).catch(() => {});
+  }, [deploymentUpdate]);
 
   useEffect(() => {
     async function load() {
@@ -250,10 +264,6 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
     setTimeout(() => setCopied(null), 1500);
   };
 
-  const healthStatus = service && deployments.length > 0
-    ? (deployments[0].status === "success" ? "healthy" : "unhealthy")
-    : null;
-
   if (loading) {
     return (
       <div className="animate-fade-up">
@@ -309,11 +319,6 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
               </div>
             )}
             <StatusBadge status={service.status} />
-            {healthStatus && (
-              <span className={healthStatus === "healthy" ? "text-emerald-500" : "text-red-500"} title={healthStatus}>
-                {healthStatus === "healthy" ? <Check className="w-4 h-4" /> : <Bolt className="w-4 h-4" />}
-              </span>
-            )}
           </div>
           <div className="flex items-center gap-2 mt-1">
             <StackBadge category={service.category} languages={service.languages} size="sm" />
@@ -497,6 +502,10 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
             </CardContent>
           </Card>
 
+          {service && (
+            <HealthCard service={service} onServiceChange={setService} />
+          )}
+
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
@@ -595,6 +604,11 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
                       <div className="flex items-center gap-1.5">
                         <span className={`w-1.5 h-1.5 rounded-full ${dep.status === "success" ? "bg-emerald-500" : dep.status === "failed" ? "bg-red-500" : "bg-amber-500"}`} />
                         <span className="text-[10px] capitalize text-muted-foreground">{dep.status}</span>
+                        {dep.message && (
+                          <span className="text-[9px] text-muted-foreground max-w-[120px] truncate" title={dep.message}>
+                            {dep.message}
+                          </span>
+                        )}
                       </div>
                     </div>
                   ))}

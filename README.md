@@ -38,7 +38,13 @@ your GitHub OAuth credentials to log in and create services.
 - **Import existing repos** — bring your own GitHub repos into the platform
   with full provisioning applied retroactively.
 - **Service detail** — inline editing of name and description, activity
-  timeline, paginated deployments panel, health indicator, copy to clipboard.
+  timeline, paginated deployments panel, copy to clipboard.
+- **Real health checks** — per-service HTTP health check against a
+  configurable URL, auto-refreshed (WebSocket) and shown in catalog and detail
+  with latency and last-check time. Trigger a check on demand from the UI.
+- **Real deployment state** — deployments are resolved by polling Argo CD
+  (no fire-and-forget): status `success` only when Argo confirms the sync,
+  with `finishedAt` and a human message, streamed live to the UI.
 - **Dependency graph** — define and visualize which services consume or are
   consumed by others, with autocomplete search.
 - **Repository access management** — grant or revoke GitHub collaborator
@@ -125,6 +131,18 @@ TERRAFORM_CLOUD_TOKEN=
 TERRAFORM_ORG=
 ```
 
+Health checks and Argo CD polling use sensible defaults and are optional:
+
+```bash
+# Health checks (optional — defaults shown)
+HEALTH_CHECK_INTERVAL_MS=60000
+HEALTH_CHECK_TIMEOUT_MS=5000
+
+# Argo CD polling (optional — defaults shown)
+ARGOCD_POLL_INTERVAL_MS=5000
+ARGOCD_WATCH_TIMEOUT_MS=1800000
+```
+
 ## GitHub OAuth setup
 
 1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
@@ -164,12 +182,13 @@ the database.
 | POST | `/api/services/import` | Import existing GitHub repo `{ repoUrl, teamId, provisioning?, enableBranchProtection? }` |
 | POST | `/api/services/bulk-delete` | Bulk delete `{ ids: [...] }` with repo cleanup |
 | GET | `/api/services/:slug` | Detail with team, owner, jobs, deployments |
-| PATCH | `/api/services/:slug` | Edit name and/or description |
+| PATCH | `/api/services/:slug` | Edit name and/or description; optional `healthUrl` (or `null` to disable health checks) |
+| POST | `/api/services/:slug/health/check` | Run a health check now (requires `healthUrl`) |
 | DELETE | `/api/services/:slug` | Delete service, jobs, deployments, and GitHub repo |
 | GET | `/api/services/:slug/activity` | Unified timeline of jobs + deployments |
 | GET | `/api/services/:slug/jobs` | Provisioning job logs |
 | GET | `/api/services/:slug/deployments` | Paginated deployment history (`?page=&limit=`) |
-| POST | `/api/services/:slug/deploy` | Register new deployment + Argo CD sync if configured |
+| POST | `/api/services/:slug/deploy` | Register new deployment + Argo CD sync (status resolved by polling) |
 | POST | `/api/services/:slug/sync` | Manual Argo CD sync |
 | POST | `/api/services/:slug/provision` | Re-provision missing or failed steps `{ steps?: [...], enableBranchProtection? }` |
 | GET | `/api/services/:slug/dependencies` | Get dependency graph (`dependsOn` + `dependedOnBy`) |
@@ -202,8 +221,12 @@ Connect to the Socket.IO server for real-time updates:
 
 - `job:update` — emitted on every provisioning step (`{ jobId, serviceId, type, status, log }`)
 - `service:ready` — emitted when all jobs complete (`{ serviceId, slug, repoUrl }`)
+- `health:update` — emitted when a service health check completes (`{ serviceId, status, latencyMs, detail, checkedAt }`)
+- `deployment:update` — emitted when a deployment reaches a terminal state (`{ serviceId, deploymentId, status, message, finishedAt }`)
 
 Join the room `service:{serviceId}` to receive events for a specific service.
+The catalog page joins the `catalog` room to receive `health:update` and
+`deployment:update` for every visible service.
 
 ## Project Structure
 

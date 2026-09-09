@@ -4,10 +4,12 @@ import { CATEGORIES } from "@infraena/shared-types";
 import type { ServiceCategory } from "@infraena/shared-types";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { useCatalogLive } from "@/lib/websocket";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StackBadge } from "@/components/StackBadge";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { SetupIncompleteBanner } from "./SetupIncompleteBanner";
+import { HealthDot } from "./HealthDot";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
@@ -36,6 +38,17 @@ const languageLabels: Record<string, string> = {
 };
 
 const statuses: string[] = ["provisioning", "ready", "failed"];
+
+function deployStatusMeta(status: string) {
+  switch (status) {
+    case "success":
+      return { dot: "bg-emerald-500", text: "text-emerald-600", label: "success" };
+    case "failed":
+      return { dot: "bg-red-500", text: "text-red-600", label: "failed" };
+    default:
+      return { dot: "bg-amber-500", text: "text-amber-600", label: status };
+  }
+}
 
 export function CatalogPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const [services, setServices] = useState<Service[]>([]);
@@ -128,10 +141,28 @@ export function CatalogPage({ onNavigate }: { onNavigate: (path: string) => void
     }
   };
 
+  const { health: liveHealth, deployments: liveDeployments } = useCatalogLive();
+
   const filtered = useMemo(() => {
-    if (!search) return services;
-    return services.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()));
-  }, [services, search]);
+    const merged = services.map((s) => {
+      const h = liveHealth[s.id];
+      const d = liveDeployments[s.id];
+      if (!h && !d) return s;
+      return {
+        ...s,
+        healthStatus: h?.status ?? s.healthStatus,
+        healthDetail: h?.detail ?? s.healthDetail,
+        healthLatencyMs: h?.latencyMs ?? s.healthLatencyMs,
+        lastHealthCheckAt: h?.checkedAt ?? s.lastHealthCheckAt,
+        lastDeployment:
+          d && s.lastDeployment
+            ? { ...s.lastDeployment, status: d.status, message: d.message, finishedAt: d.finishedAt }
+            : s.lastDeployment,
+      };
+    });
+    if (!search) return merged;
+    return merged.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()));
+  }, [services, search, liveHealth, liveDeployments]);
 
   const toggleLanguage = (lang: string) => {
     setLanguageFilters((prev) =>
@@ -354,7 +385,16 @@ export function CatalogPage({ onNavigate }: { onNavigate: (path: string) => void
                     <p className="font-medium group-hover:text-primary transition-colors">{service.name}</p>
                     <p className="text-xs text-muted-foreground font-mono">{service.slug}</p>
                   </div>
-                  <StatusBadge status={service.status} />
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={service.status} />
+                    <HealthDot
+                      healthUrl={service.healthUrl}
+                      healthStatus={service.healthStatus}
+                      healthDetail={service.healthDetail}
+                      latencyMs={service.healthLatencyMs}
+                      lastHealthCheckAt={service.lastHealthCheckAt}
+                    />
+                  </div>
                 </div>
                 {service.description && (
                   <p className="text-xs text-muted-foreground mb-2 line-clamp-2">{service.description}</p>
@@ -362,12 +402,19 @@ export function CatalogPage({ onNavigate }: { onNavigate: (path: string) => void
                 <div className="flex items-center gap-2">
                   <StackBadge category={service.category} languages={service.languages} size="sm" />
                 </div>
-                {service.lastDeployment && (
-                  <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                    <span>Last deploy: {service.lastDeployment.version} to {service.lastDeployment.environment}</span>
-                    <span>{formatDistanceToNow(new Date(service.lastDeployment.createdAt), { addSuffix: true })}</span>
-                  </div>
-                )}
+                {service.lastDeployment && (() => {
+                  const meta = deployStatusMeta(service.lastDeployment!.status);
+                  return (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                      <span>Last deploy: {service.lastDeployment!.version} to {service.lastDeployment!.environment}</span>
+                      <span className={cn("flex items-center gap-1", meta.text)}>
+                        <span className={cn("h-1.5 w-1.5 rounded-full", meta.dot)} />
+                        {meta.label}
+                      </span>
+                      <span>{formatDistanceToNow(new Date(service.lastDeployment!.createdAt), { addSuffix: true })}</span>
+                    </div>
+                  );
+                })()}
               </div>
             ))}
           </div>
@@ -402,18 +449,37 @@ export function CatalogPage({ onNavigate }: { onNavigate: (path: string) => void
                       <div>
                         <p className="font-medium group-hover:text-primary transition-colors">{service.name}</p>
                         {service.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{service.description}</p>}
-                        {service.lastDeployment && (
-                          <p className="text-[10px] text-muted-foreground mt-1">
-                            Last deploy: <Badge variant="outline" className="text-[9px] font-mono px-1 py-0">{service.lastDeployment.version}</Badge> to {service.lastDeployment.environment} {formatDistanceToNow(new Date(service.lastDeployment.createdAt), { addSuffix: true })}
-                          </p>
-                        )}
+                        {service.lastDeployment && (() => {
+                          const meta = deployStatusMeta(service.lastDeployment!.status);
+                          return (
+                            <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
+                              <span>Last deploy:</span>
+                              <Badge variant="outline" className="text-[9px] font-mono px-1 py-0">{service.lastDeployment!.version}</Badge>
+                              <span>to {service.lastDeployment!.environment}</span>
+                              <span className={cn("flex items-center gap-1", meta.text)}>
+                                <span className={cn("h-1.5 w-1.5 rounded-full", meta.dot)} />
+                                {meta.label}
+                              </span>
+                              <span>{formatDistanceToNow(new Date(service.lastDeployment!.createdAt), { addSuffix: true })}</span>
+                            </p>
+                          );
+                        })()}
                       </div>
                     </TableCell>
                     <TableCell className="cursor-pointer" onClick={() => onNavigate(`/services/${service.slug}`)}>
                       <StackBadge category={service.category} languages={service.languages} />
                     </TableCell>
                     <TableCell className="cursor-pointer" onClick={() => onNavigate(`/services/${service.slug}`)}>
-                      <StatusBadge status={service.status} />
+                      <div className="flex items-center gap-2">
+                        <StatusBadge status={service.status} />
+                        <HealthDot
+                          healthUrl={service.healthUrl}
+                          healthStatus={service.healthStatus}
+                          healthDetail={service.healthDetail}
+                          latencyMs={service.healthLatencyMs}
+                          lastHealthCheckAt={service.lastHealthCheckAt}
+                        />
+                      </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground text-xs cursor-pointer" onClick={() => onNavigate(`/services/${service.slug}`)}>
                       {formatDistanceToNow(new Date(service.createdAt), { addSuffix: true })}

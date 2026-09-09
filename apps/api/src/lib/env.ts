@@ -19,6 +19,10 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default("http://localhost:3000"),
   RATE_LIMIT_MAX: z.coerce.number().default(200),
   RATE_LIMIT_WINDOW: z.string().default("1 minute"),
+  HEALTH_CHECK_INTERVAL_MS: z.coerce.number().default(60000).refine((v) => v > 0, "must be a positive number"),
+  HEALTH_CHECK_TIMEOUT_MS: z.coerce.number().default(5000).refine((v) => v > 0, "must be a positive number"),
+  ARGOCD_POLL_INTERVAL_MS: z.coerce.number().default(5000).refine((v) => v > 0, "must be a positive number"),
+  ARGOCD_WATCH_TIMEOUT_MS: z.coerce.number().default(1800000).refine((v) => v > 0, "must be a positive number"),
 });
 
 export type Env = z.infer<typeof envSchema>;
