@@ -59,6 +59,8 @@ model Service {
   deployments       Deployment[]
   dependsOn         ServiceDependency[] @relation("SourceService")
   dependedOnBy      ServiceDependency[] @relation("TargetService")
+  webhooks          Webhook[]
+  webhookEvents     WebhookEvent[]
 
   @@map("services")
 }
@@ -106,4 +108,34 @@ model Deployment {
   createdAt     DateTime  @default(now()) @map("created_at")
 
   @@map("deployments")
+}
+
+model Webhook {
+  id        String   @id @default(uuid()) @db.Uuid
+  serviceId String   @map("service_id") @db.Uuid
+  service   Service  @relation(fields: [serviceId], references: [id])
+  direction String   @default("inbound")
+  kind      String   @default("generic")
+  url       String?
+  token     String?  @unique
+  enabled   Boolean  @default(true)
+  events    String[] @default(["*"])
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("webhooks")
+}
+
+model WebhookEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  webhookId  String?  @map("webhook_id") @db.Uuid
+  serviceId  String   @map("service_id") @db.Uuid
+  service    Service  @relation(fields: [serviceId], references: [id])
+  direction  String   @default("inbound")
+  event      String
+  status     String   @default("received")
+  payload    Json?
+  error      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("webhook_events")
 }
