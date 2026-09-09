@@ -19,7 +19,7 @@ Opens API at `http://localhost:8080` and web at `http://localhost:3000`.
 ├── apps/
 │   ├── api/                 # Fastify 5 backend
 │   │   ├── src/
-│   │   │   ├── routes/      # REST endpoints (services, teams, auth, setup)
+│   │   │   ├── routes/      # REST endpoints (services, teams, auth, setup, webhooks)
 │   │   │   ├── workers/     # BullMQ workers (github, terraform, vault)
 │   │   │   ├── db/          # Prisma client singleton
 │   │   │   └── lib/         # Env, auth, queue, socket, metrics

@@ -29,6 +29,7 @@ We will respond within 48 hours and work with you to verify and address the issu
 
 - **Authentication**: GitHub OAuth 2.0 + JWT via `jose`. Cookies are `httpOnly`.
 - **Authorization**: Pre-handler middleware on all mutation endpoints.
+- **Webhook inbound**: each service has a per-service token in the URL (32-byte hex, constant-time comparison, 404 on mismatch, never logged). Regenerable via API. Payload capped at 16 KB.
 - **Rate Limiting**: 200 requests/minute per IP on all endpoints.
 - **Workers**: Each worker (GitHub, Terraform, Vault) verifies the service exists and is not a test user before making external API calls.
 - **Tests**: Test mode (`NODE_ENV=test` / `VITEST`) never enqueues real jobs. Test data is self-cleaned via `afterAll`.

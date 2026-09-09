@@ -45,6 +45,13 @@ your GitHub OAuth credentials to log in and create services.
 - **Real deployment state** — deployments are resolved by polling Argo CD
   (no fire-and-forget): status `success` only when Argo confirms the sync,
   with `finishedAt` and a human message, streamed live to the UI.
+- **Generic webhook endpoint** — every service gets a stable inbound URL
+  (`POST /api/webhooks/in/<token>`) so your CI/CD can report events
+  (deployments, health, custom). `deployment.started` creates a deployment
+  that Argo CD then resolves to its real state.
+- **Slack/Discord notifications** — provisioning, deploy and health events
+  notify configured channels (Slack, Discord or any generic webhook), with a
+  delivery log and a "send test" button in the UI.
 - **Dependency graph** — define and visualize which services consume or are
   consumed by others, with autocomplete search.
 - **Repository access management** — grant or revoke GitHub collaborator
@@ -141,6 +148,11 @@ HEALTH_CHECK_TIMEOUT_MS=5000
 # Argo CD polling (optional — defaults shown)
 ARGOCD_POLL_INTERVAL_MS=5000
 ARGOCD_WATCH_TIMEOUT_MS=1800000
+
+# Notifications (optional — global channels for Slack/Discord)
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+NOTIFY_TIMEOUT_MS=5000
 ```
 
 ## GitHub OAuth setup
@@ -195,6 +207,18 @@ the database.
 | POST | `/api/services/:slug/dependencies` | Add dependency `{ targetSlug, type?, label? }` |
 | DELETE | `/api/services/:slug/dependencies/:id` | Remove dependency |
 
+### Webhooks & notifications
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/api/webhooks/in/:token` | No (token in URL) | Inbound generic webhook. `deployment.started` creates a `running` deployment resolved by Argo CD |
+| GET | `/api/webhooks/:slug` | Yes | Inbound + outbound config and recent events |
+| POST | `/api/webhooks/:slug/inbound/regenerate` | Yes | Rotate the inbound token |
+| GET | `/api/webhooks/:slug/events` | Yes | Paginated webhook event history |
+| POST | `/api/webhooks/:slug/outbound` | Yes | Create outbound channel `{ kind, url, events? }` (slack/discord/generic) |
+| PATCH | `/api/webhooks/:slug/outbound/:id` | Yes | Edit outbound channel (enable/disable, url, events) |
+| DELETE | `/api/webhooks/:slug/outbound/:id` | Yes | Remove outbound channel |
+| POST | `/api/webhooks/:slug/outbound/:id/test` | Yes | Send a test notification and log the delivery |
+
 ### Teams
 | Method | Route | Description |
 |--------|-------|-------------|
@@ -223,6 +247,7 @@ Connect to the Socket.IO server for real-time updates:
 - `service:ready` — emitted when all jobs complete (`{ serviceId, slug, repoUrl }`)
 - `health:update` — emitted when a service health check completes (`{ serviceId, status, latencyMs, detail, checkedAt }`)
 - `deployment:update` — emitted when a deployment reaches a terminal state (`{ serviceId, deploymentId, status, message, finishedAt }`)
+- `webhook:event` — emitted when an inbound webhook event is received (`{ serviceId, event, message, receivedAt }`)
 
 Join the room `service:{serviceId}` to receive events for a specific service.
 The catalog page joins the `catalog` room to receive `health:update` and

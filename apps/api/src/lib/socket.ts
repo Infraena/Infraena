@@ -1,6 +1,6 @@
 import { Server as HttpServer } from "http";
 import { Server } from "socket.io";
-import type { JobUpdateMessage, ServiceReadyMessage, HealthUpdateMessage, DeploymentUpdateMessage } from "@infraena/shared-types";
+import type { JobUpdateMessage, ServiceReadyMessage, HealthUpdateMessage, DeploymentUpdateMessage, WebhookEventMessage } from "@infraena/shared-types";
 import { activeWebSocketConnections } from "./metrics.js";
 
 let io: Server | null = null;
@@ -58,4 +58,9 @@ export function emitHealthUpdate(serviceId: string, message: HealthUpdateMessage
 export function emitDeploymentUpdate(serviceId: string, message: DeploymentUpdateMessage) {
   if (!io) return;
   io.to(`service:${serviceId}`).to("catalog").emit("deployment:update", message);
+}
+
+export function emitWebhookEvent(serviceId: string, message: WebhookEventMessage) {
+  if (!io) return;
+  io.to(`service:${serviceId}`).emit("webhook:event", message);
 }

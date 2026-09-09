@@ -57,6 +57,14 @@ afterAll(async () => {
   await prisma.deployment.deleteMany({
     where: { service: { name: { startsWith: "svc-" } } },
   });
+  if (testServiceIds.length > 0) {
+    await prisma.webhookEvent.deleteMany({
+      where: { serviceId: { in: testServiceIds } },
+    });
+    await prisma.webhook.deleteMany({
+      where: { serviceId: { in: testServiceIds } },
+    });
+  }
   await prisma.service.deleteMany({
     where: { name: { startsWith: "svc-" } },
   });
@@ -748,6 +756,297 @@ describe("Setup", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(typeof data.ok).toBe("boolean");
+  });
+});
+
+describe("Webhooks", () => {
+  const webhookServiceName = `svc-webhook-${Date.now()}`;
+  let webhookSlug: string;
+  let webhookTeamSlug: string;
+  let inboundToken: string;
+  let okOutboundId: string;
+
+  beforeAll(async () => {
+    const teamRes = await fetch(`${baseUrl}/api/teams`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ name: `svc-team-${Date.now()}` }),
+    });
+    const teamData = await teamRes.json();
+    webhookTeamSlug = teamData.data.slug;
+
+    const svcRes = await fetch(`${baseUrl}/api/services`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        name: webhookServiceName,
+        category: "backend",
+        languages: ["nodejs"],
+        teamId: teamData.data.id,
+        provisioning: [],
+      }),
+    });
+    const svcData = await svcRes.json();
+    webhookSlug = svcData.data.slug;
+
+    const whRes = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}`, {
+      headers: authHeadersNoBody(),
+    });
+    const whData = await whRes.json();
+    inboundToken = whData.inbound.token;
+
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.startsWith(baseUrl)) {
+          return realFetch(input, init);
+        }
+        if (url.includes("hooks.slack.test/fail")) {
+          return new Response(null, { status: 500 });
+        }
+        if (url.includes("hooks.slack.test")) {
+          return new Response(null, { status: 200 });
+        }
+        return new Response(JSON.stringify({}), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch
+    );
+  });
+
+  afterAll(async () => {
+    vi.unstubAllGlobals();
+    try {
+      await fetch(`${baseUrl}/api/services/${webhookSlug}`, {
+        method: "DELETE",
+        headers: authHeadersNoBody(),
+      });
+    } catch {}
+    try {
+      await fetch(`${baseUrl}/api/teams/${webhookTeamSlug}`, {
+        method: "DELETE",
+        headers: authHeadersNoBody(),
+      });
+    } catch {}
+  });
+
+  it("GET /api/webhooks/:slug requires auth", async () => {
+    const res = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}`);
+    expect(res.status).toBe(401);
+  });
+
+  it("GET /api/webhooks/:slug returns the auto-created inbound webhook", async () => {
+    const res = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}`, {
+      headers: authHeadersNoBody(),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.inbound).toBeTruthy();
+    expect(data.inbound.direction).toBe("inbound");
+    expect(data.inbound.token).toMatch(/^[0-9a-f]{64}$/);
+    expect(Array.isArray(data.outbound)).toBe(true);
+    expect(Array.isArray(data.recentEvents)).toBe(true);
+  });
+
+  it("POST /api/webhooks/in/:token accepts deployment.started and creates a running deployment", async () => {
+    const res = await fetch(`${baseUrl}/api/webhooks/in/${inboundToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event: "deployment.started",
+        version: "v9.9.9",
+        environment: "production",
+        message: "from CI",
+        data: { ref: "main" },
+      }),
+    });
+    expect(res.status).toBe(202);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+    expect(data.event).toBe("deployment.started");
+    expect(JSON.stringify(data)).not.toContain(inboundToken);
+
+    const deploysRes = await fetch(`${baseUrl}/api/services/${webhookSlug}/deployments`);
+    const deploys = await deploysRes.json();
+    expect(deploys.data.length).toBeGreaterThan(0);
+    expect(deploys.data[0].status).toBe("running");
+    expect(deploys.data[0].environment).toBe("production");
+    expect(deploys.data[0].version).toBe("v9.9.9");
+    expect(deploys.data[0].message).toContain("webhook");
+  });
+
+  it("POST /api/webhooks/in/:token records custom events without side effects", async () => {
+    const res = await fetch(`${baseUrl}/api/webhooks/in/${inboundToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event: "custom.deploy", data: { ref: "main" } }),
+    });
+    expect(res.status).toBe(202);
+
+    const eventsRes = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}/events?limit=50`, {
+      headers: authHeadersNoBody(),
+    });
+    const events = await eventsRes.json();
+    expect(events.data.some((e: { event: string }) => e.event === "custom.deploy")).toBe(true);
+    expect(JSON.stringify(events)).not.toContain("main");
+  });
+
+  it("POST /api/webhooks/in/:token rejects a bad token", async () => {
+    const res = await fetch(`${baseUrl}/api/webhooks/in/deadbeef`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event: "custom.x" }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("POST /api/webhooks/in/:token rejects a malformed body", async () => {
+    const res = await fetch(`${baseUrl}/api/webhooks/in/${inboundToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ environment: "qa" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /api/webhooks/in/:token deployment.finished never writes a terminal status", async () => {
+    const before = await (await fetch(`${baseUrl}/api/services/${webhookSlug}/deployments`)).json();
+    const runningBefore = before.data.filter((d: { status: string }) => d.status === "running").length;
+
+    const res = await fetch(`${baseUrl}/api/webhooks/in/${inboundToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event: "deployment.finished", version: "v9.9.9" }),
+    });
+    expect(res.status).toBe(202);
+
+    const after = await (await fetch(`${baseUrl}/api/services/${webhookSlug}/deployments`)).json();
+    const runningAfter = after.data.filter((d: { status: string }) => d.status === "running").length;
+    const successAfter = after.data.filter((d: { status: string }) => d.status === "success").length;
+    expect(runningAfter).toBe(runningBefore);
+    expect(successAfter).toBe(0);
+  });
+
+  it("POST /:slug/inbound/regenerate issues a new token and invalidates the old one", async () => {
+    const res = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}/inbound/regenerate`, {
+      method: "POST",
+      headers: authHeadersNoBody(),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.token).toMatch(/^[0-9a-f]{64}$/);
+    expect(data.token).not.toBe(inboundToken);
+
+    const oldRes = await fetch(`${baseUrl}/api/webhooks/in/${inboundToken}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event: "custom.x" }),
+    });
+    expect(oldRes.status).toBe(404);
+
+    inboundToken = data.token;
+  });
+
+  it("POST /:slug/outbound creates a webhook and /test delivers ok", async () => {
+    const createRes = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}/outbound`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        kind: "slack",
+        url: "https://hooks.slack.test/abc",
+        events: ["service.ready", "deployment.finished"],
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const createData = await createRes.json();
+    expect(createData.data.direction).toBe("outbound");
+    expect(createData.data.kind).toBe("slack");
+    expect(createData.data.events).toEqual(["service.ready", "deployment.finished"]);
+    okOutboundId = createData.data.id;
+
+    const testRes = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}/outbound/${okOutboundId}/test`, {
+      method: "POST",
+      headers: authHeadersNoBody(),
+    });
+    expect(testRes.status).toBe(200);
+    const testData = await testRes.json();
+    expect(testData.ok).toBe(true);
+  });
+
+  it("POST /:slug/outbound rejects invalid kind, url and events", async () => {
+    const badKind = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}/outbound`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ kind: "teams", url: "https://example.com" }),
+    });
+    expect(badKind.status).toBe(400);
+
+    const badUrl = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}/outbound`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ kind: "generic", url: "ftp://example.com" }),
+    });
+    expect(badUrl.status).toBe(400);
+
+    const badEvents = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}/outbound`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ kind: "generic", url: "https://example.com/hook", events: ["nope"] }),
+    });
+    expect(badEvents.status).toBe(400);
+  });
+
+  it("POST /:slug/outbound/:id/test fails on 5xx and logs the failure", async () => {
+    const createRes = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}/outbound`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ kind: "discord", url: "https://hooks.slack.test/fail" }),
+    });
+    const createData = await createRes.json();
+    const failId = createData.data.id;
+
+    const testRes = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}/outbound/${failId}/test`, {
+      method: "POST",
+      headers: authHeadersNoBody(),
+    });
+    expect(testRes.status).toBe(200);
+    const testData = await testRes.json();
+    expect(testData.ok).toBe(false);
+    expect(testData.status).toBe(500);
+
+    const eventsRes = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}/events?limit=50`, {
+      headers: authHeadersNoBody(),
+    });
+    const events = await eventsRes.json();
+    expect(events.data.some((e: { event: string; status: string }) => e.event === "webhook.test" && e.status === "failed")).toBe(true);
+  });
+
+  it("PATCH /:slug/outbound/:id toggles enabled", async () => {
+    const res = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}/outbound/${okOutboundId}`, {
+      method: "PATCH",
+      headers: authHeaders(),
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.data.enabled).toBe(false);
+  });
+
+  it("DELETE /:slug/outbound/:id removes the webhook", async () => {
+    const res = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}/outbound/${okOutboundId}`, {
+      method: "DELETE",
+      headers: authHeadersNoBody(),
+    });
+    expect(res.status).toBe(200);
+
+    const getRes = await fetch(`${baseUrl}/api/webhooks/${webhookSlug}`, {
+      headers: authHeadersNoBody(),
+    });
+    const data = await getRes.json();
+    expect(data.outbound.some((w: { id: string }) => w.id === okOutboundId)).toBe(false);
   });
 });
 

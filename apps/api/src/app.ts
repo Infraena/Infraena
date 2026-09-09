@@ -9,6 +9,7 @@ import { authRoutes } from "./routes/auth.js";
 import { serviceRoutes } from "./routes/services.js";
 import { teamRoutes } from "./routes/teams.js";
 import { setupRoutes } from "./routes/setup.js";
+import { webhookRoutes } from "./routes/webhooks.js";
 import {
   httpRequestsTotal,
   httpRequestDurationSeconds,
@@ -96,6 +97,7 @@ app.register(authRoutes, { prefix: "/auth" });
 app.register(serviceRoutes, { prefix: "/api/services" });
 app.register(teamRoutes, { prefix: "/api/teams" });
 app.register(setupRoutes, { prefix: "/api/setup" });
+app.register(webhookRoutes, { prefix: "/api/webhooks" });
 
 app.get("/health", async () => {
   return { status: "ok", timestamp: new Date().toISOString() };
