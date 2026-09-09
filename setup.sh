@@ -122,6 +122,7 @@ pnpm db:migrate 2>/dev/null || {
   cd apps/api && pnpm exec prisma db push && cd ../..
   echo -e "  ${GREEN}✓${RESET} Database synced with prisma db push"
 }
+pnpm db:seed 2>/dev/null || true
 echo ""
 
 echo -e "${GREEN}${BOLD}Setup complete!${RESET}"

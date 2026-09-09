@@ -11,7 +11,9 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,json,md,yaml}\"",
     "db:migrate": "pnpm --filter @infraena/api exec prisma migrate dev",
     "db:generate": "pnpm --filter @infraena/api exec prisma generate",
-    "db:studio": "pnpm --filter @infraena/api exec prisma studio"
+    "db:studio": "pnpm --filter @infraena/api exec prisma studio",
+    "db:seed": "pnpm --filter @infraena/api exec prisma db seed",
+    "db:seed:clean": "pnpm --filter @infraena/api exec tsx prisma/seed.ts --clean"
   },
   "devDependencies": {
     "prettier": "^3.3.0",
