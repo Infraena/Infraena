@@ -10,6 +10,8 @@ import { githubQueue, terraformQueue, vaultQueue } from "../lib/queue.js";
 import { authMiddleware, getUser } from "../lib/auth.js";
 import { isHealthUrlAllowed, performHealthCheck } from "../lib/health.js";
 import { triggerAppSync } from "../lib/argo.js";
+import { generateWebhookToken } from "../lib/webhooks.js";
+import { notify } from "../lib/notify.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const templatesPath = join(__dirname, "..", "..", "..", "..", "templates", "index.json");
@@ -271,6 +273,15 @@ export async function serviceRoutes(app: FastifyInstance) {
       include: { team: true, owner: true },
     });
 
+    await prisma.webhook.create({
+      data: {
+        serviceId: service.id,
+        direction: "inbound",
+        kind: "generic",
+        token: generateWebhookToken(),
+      },
+    });
+
     const allJobTypes = [
       { type: "github" as const, queue: githubQueue },
       { type: "terraform" as const, queue: terraformQueue },
@@ -381,6 +392,15 @@ export async function serviceRoutes(app: FastifyInstance) {
         status: initialStatus,
       },
       include: { team: true, owner: true },
+    });
+
+    await prisma.webhook.create({
+      data: {
+        serviceId: service.id,
+        direction: "inbound",
+        kind: "generic",
+        token: generateWebhookToken(),
+      },
     });
 
     const allJobTypes = [
@@ -503,6 +523,12 @@ export async function serviceRoutes(app: FastifyInstance) {
         triggeredById: existingUser?.id ?? null,
         argocdApp: `infraena-${service.slug}`,
       },
+    });
+
+    void notify({
+      event: "deployment.started",
+      serviceId: service.id,
+      message: `Deploy ${version} to ${environment} started for ${service.slug}`,
     });
 
     const sync = await triggerAppSync(`infraena-${service.slug}`);
@@ -660,6 +686,8 @@ export async function serviceRoutes(app: FastifyInstance) {
       await deleteGitHubRepo(svc.githubRepoUrl);
       await prisma.provisionJob.deleteMany({ where: { serviceId: svc.id } });
       await prisma.deployment.deleteMany({ where: { serviceId: svc.id } });
+      await prisma.webhookEvent.deleteMany({ where: { serviceId: svc.id } });
+      await prisma.webhook.deleteMany({ where: { serviceId: svc.id } });
     }
     await prisma.service.deleteMany({ where: { id: { in: body.ids } } });
 
@@ -854,6 +882,8 @@ export async function serviceRoutes(app: FastifyInstance) {
     await prisma.serviceDependency.deleteMany({ where: { OR: [{ sourceServiceId: service.id }, { targetServiceId: service.id }] } });
     await prisma.provisionJob.deleteMany({ where: { serviceId: service.id } });
     await prisma.deployment.deleteMany({ where: { serviceId: service.id } });
+    await prisma.webhookEvent.deleteMany({ where: { serviceId: service.id } });
+    await prisma.webhook.deleteMany({ where: { serviceId: service.id } });
     await prisma.service.delete({ where: { id: service.id } });
 
     return { success: true, repoDeleted: !!service.githubRepoUrl };

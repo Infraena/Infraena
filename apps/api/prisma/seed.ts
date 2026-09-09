@@ -119,6 +119,8 @@ async function deleteDemoRows() {
   }
   await prisma.provisionJob.deleteMany({ where: { serviceId: { in: demoIds } } });
   await prisma.deployment.deleteMany({ where: { serviceId: { in: demoIds } } });
+  await prisma.webhookEvent.deleteMany({ where: { serviceId: { in: demoIds } } });
+  await prisma.webhook.deleteMany({ where: { serviceId: { in: demoIds } } });
   await prisma.service.deleteMany({ where: { slug: { in: DEMO_SERVICES.map((s) => s.slug) } } });
   await prisma.user.deleteMany({ where: { githubId: DEMO_USER.githubId } });
   await prisma.team.deleteMany({ where: { slug: { in: DEMO_TEAMS.map((t) => t.slug) } } });
@@ -166,6 +168,16 @@ async function seed() {
     if (svc.status === "ready" && svc.provisioning.length > 0) {
       await prisma.provisionJob.createMany({
         data: successJobs(created.id, svc.provisioning.filter(isJobType)),
+      });
+    }
+    if (svc.status === "ready") {
+      await prisma.webhook.create({
+        data: {
+          serviceId: created.id,
+          direction: "inbound",
+          kind: "generic",
+          token: `demo-inbound-${svc.slug}`,
+        },
       });
     }
     if (svc.status === "failed") {
