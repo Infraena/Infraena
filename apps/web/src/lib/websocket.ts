@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
-import type { JobType, JobStatus, HealthUpdateMessage, DeploymentUpdateMessage } from "@infraena/shared-types";
+import type { JobType, JobStatus, HealthUpdateMessage, DeploymentUpdateMessage, WebhookEventMessage } from "@infraena/shared-types";
 
 const WS_URL = import.meta.env.VITE_WS_URL ?? "http://localhost:8080";
 
@@ -136,4 +136,34 @@ export function useCatalogLive() {
   }, []);
 
   return { health, deployments };
+}
+
+export function useWebhookEvents(serviceId: string | null) {
+  const [last, setLast] = useState<WebhookEventMessage | null>(null);
+  const socketRef = useRef<Socket | null>(null);
+
+  useEffect(() => {
+    if (!serviceId) return;
+
+    const socket = io(WS_URL, {
+      transports: ["websocket", "polling"],
+    });
+
+    socket.on("connect", () => {
+      socket.emit("join", `service:${serviceId}`);
+    });
+
+    socket.on("webhook:event", (msg: WebhookEventMessage) => {
+      if (msg.serviceId === serviceId) setLast(msg);
+    });
+
+    socketRef.current = socket;
+
+    return () => {
+      socket.emit("leave", `service:${serviceId}`);
+      socket.disconnect();
+    };
+  }, [serviceId]);
+
+  return last;
 }

@@ -7,6 +7,7 @@ import { StackBadge } from "@/components/StackBadge";
 import { LogTerminal } from "@/components/LogTerminal";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { HealthCard } from "./HealthCard";
+import { WebhooksPanel } from "./WebhooksPanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -504,6 +505,10 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
 
           {service && (
             <HealthCard service={service} onServiceChange={setService} />
+          )}
+
+          {service && (
+            <WebhooksPanel service={service} />
           )}
 
           <Card>
