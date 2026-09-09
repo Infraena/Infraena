@@ -1,6 +1,7 @@
 import { env } from "./env.js";
 import { prisma } from "../db/prisma.js";
 import { emitDeploymentUpdate } from "./socket.js";
+import { notify } from "./notify.js";
 import type { DeploymentStatus } from "@infraena/shared-types";
 
 export type ArgoConfig = {
@@ -153,6 +154,12 @@ async function watchDeployment(deployment: DeployTarget) {
     status: outcome.status as DeploymentStatus,
     message: outcome.message,
     finishedAt: new Date().toISOString(),
+  });
+
+  void notify({
+    event: "deployment.finished",
+    serviceId: deployment.serviceId,
+    message: `Deployment ${outcome.status} for ${deployment.argocdApp}${outcome.message ? ` — ${outcome.message}` : ""}`,
   });
 }
 

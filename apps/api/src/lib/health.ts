@@ -1,6 +1,7 @@
 import { env } from "./env.js";
 import { prisma } from "../db/prisma.js";
 import { emitHealthUpdate } from "./socket.js";
+import { notify } from "./notify.js";
 import { healthChecksTotal } from "./metrics.js";
 import type { HealthStatus } from "@infraena/shared-types";
 
@@ -91,6 +92,22 @@ export async function performHealthCheck(
         lastHealthCheckAt: new Date(checkedAt),
       },
     });
+  }
+
+  if (!forcePersist && existing && changed) {
+    if (result.status === "unhealthy" && existing.healthStatus !== "unhealthy") {
+      void notify({
+        event: "health.unhealthy",
+        serviceId,
+        message: `Service unhealthy — ${result.detail} (${result.latencyMs}ms)`,
+      });
+    } else if (result.status === "healthy" && existing.healthStatus === "unhealthy") {
+      void notify({
+        event: "health.recovered",
+        serviceId,
+        message: `Service recovered — ${result.detail}`,
+      });
+    }
   }
 
   const outcome: HealthCheckOutcome = {

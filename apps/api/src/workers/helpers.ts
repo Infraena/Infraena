@@ -2,6 +2,7 @@ import { ProvisionJob } from "@prisma/client";
 import { prisma } from "../db/prisma.js";
 import { emitJobUpdate } from "../lib/socket.js";
 import { provisionJobsTotal, recordProvisionJob, servicesGauge } from "../lib/metrics.js";
+import { notify } from "../lib/notify.js";
 
 export async function updateJobLog(
   job: ProvisionJob,
@@ -98,6 +99,16 @@ export async function markJobFailed(
     status: "failed",
     log: `Job ${job.type} failed: ${errorMessage}`,
   });
+
+  const svc = await prisma.service.findUnique({
+    where: { id: job.serviceId },
+    select: { slug: true },
+  });
+  void notify({
+    event: "service.provisioning.step.failed",
+    serviceId: job.serviceId,
+    message: `${job.type} provisioning failed for ${svc?.slug ?? "unknown"}: ${errorMessage}`,
+  });
 }
 
 export async function checkAllJobsComplete(serviceId: string) {
@@ -121,6 +132,21 @@ export async function checkAllJobsComplete(serviceId: string) {
     });
     for (const s of allServices) {
       servicesGauge.set({ status: s.status }, s._count);
+    }
+
+    const svc = await prisma.service.findUnique({
+      where: { id: serviceId },
+      select: { slug: true, githubRepoUrl: true },
+    });
+    if (svc) {
+      const message = hasErrors
+        ? `Provisioning failed for ${svc.slug}: one or more steps failed`
+        : `Service ${svc.slug} is ready${svc.githubRepoUrl ? ` — repo: ${svc.githubRepoUrl}` : ""}`;
+      void notify({
+        event: hasErrors ? "service.failed" : "service.ready",
+        serviceId,
+        message,
+      });
     }
   }
 }
