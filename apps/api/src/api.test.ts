@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { app } from "./app.js";
 import { prisma } from "./db/prisma.js";
 import * as jose from "jose";
@@ -487,6 +487,46 @@ describe("Dependencies", () => {
 });
 
 describe("Setup", () => {
+  beforeAll(() => {
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("api.github.com/user")) {
+          return new Response(JSON.stringify({ login: "tester" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url.includes("api.github.com/orgs/") && url.includes("/members/")) {
+          const authHeader = (init?.headers as Record<string, string> | undefined)?.["Authorization"] ?? "";
+          if (authHeader.includes("ghp_noorg")) {
+            return new Response(
+              JSON.stringify({ message: "Not Found" }),
+              { status: 404, headers: { "content-type": "application/json" } }
+            );
+          }
+          return new Response(null, {
+            status: 204,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url.startsWith(baseUrl)) {
+          return realFetch(input, init);
+        }
+        return new Response(JSON.stringify({ status: "ok" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch
+    );
+  });
+
+  afterAll(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("GET /api/setup/check returns checks object", async () => {
     const res = await fetch(`${baseUrl}/api/setup/check`);
     expect(res.status).toBe(200);
@@ -502,6 +542,106 @@ describe("Setup", () => {
     expect(data.checks).toHaveProperty("terraform");
     expect(data.checks).toHaveProperty("argocd");
     expect(data.checks.database.ok).toBe(true);
+  });
+
+  it("GET /api/setup/check returns structured metadata (required, envVars, provider)", async () => {
+    const res = await fetch(`${baseUrl}/api/setup/check`);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    const checks = data.checks as Record<
+      string,
+      { required: boolean; envVars: string[]; provider?: string }
+    >;
+    const providerKeys = ["github", "githubOAuth", "terraform", "vault", "argocd"];
+    const infraKeys = ["database", "redis"];
+
+    for (const key of Object.keys(checks)) {
+      expect(typeof checks[key].required).toBe("boolean");
+      expect(Array.isArray(checks[key].envVars)).toBe(true);
+    }
+    for (const key of providerKeys) {
+      expect(typeof checks[key].provider).toBe("string");
+    }
+    for (const key of infraKeys) {
+      expect(checks[key].provider).toBeUndefined();
+    }
+    expect(checks.argocd.required).toBe(false);
+    for (const key of ["database", "redis", "vault", "github", "githubOAuth", "terraform"]) {
+      expect(checks[key].required).toBe(true);
+    }
+    expect(checks.github.provider).toBe("github-pat");
+    expect(checks.githubOAuth.provider).toBe("github-oauth");
+    expect(checks.terraform.provider).toBe("terraform");
+    expect(checks.vault.provider).toBe("vault");
+    expect(checks.argocd.provider).toBe("argocd");
+    expect(checks.github.envVars).toContain("GITHUB_TOKEN");
+    expect(checks.github.envVars).toContain("GITHUB_ORG");
+    expect(checks.githubOAuth.envVars).toContain("GITHUB_CLIENT_ID");
+    expect(checks.terraform.envVars).toContain("TERRAFORM_CLOUD_TOKEN");
+  });
+
+  it("POST /api/setup/validate rejects invalid body", async () => {
+    const res = await fetch(`${baseUrl}/api/setup/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "gitlab", token: "x" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /api/setup/validate rejects overly long tokens", async () => {
+    const res = await fetch(`${baseUrl}/api/setup/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "github", token: "x".repeat(300) }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /api/setup/validate returns ok for a valid github token", async () => {
+    const res = await fetch(`${baseUrl}/api/setup/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "github", token: "ghp_valid" }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+    expect(data.message).toContain("tester");
+  });
+
+  it("POST /api/setup/validate returns ok:false when the token is not a member of the org", async () => {
+    const res = await fetch(`${baseUrl}/api/setup/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "github", token: "ghp_noorg" }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(false);
+    expect(data.message).toContain("not a member");
+  });
+
+  it("POST /api/setup/validate does not leak the token in the response", async () => {
+    const res = await fetch(`${baseUrl}/api/setup/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "github", token: "ghp_secret_value" }),
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain("ghp_secret_value");
+  });
+
+  it("POST /api/setup/validate handles terraform (not configured org)", async () => {
+    const res = await fetch(`${baseUrl}/api/setup/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "terraform", token: "tf_token" }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(typeof data.ok).toBe("boolean");
   });
 });
 
