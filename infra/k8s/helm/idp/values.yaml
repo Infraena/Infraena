@@ -24,9 +24,12 @@ securityContext:
   capabilities:
     drop:
       - ALL
-  readOnlyRootFilesystem: false
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
   runAsNonRoot: true
   runAsUser: 1001
+  seccompProfile:
+    type: RuntimeDefault
 
 api:
   enabled: true

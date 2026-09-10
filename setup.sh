@@ -69,18 +69,19 @@ echo -e "  ${GREEN}✓${RESET} PostgreSQL, Redis and Vault are starting..."
 echo ""
 
 echo -e "${BOLD}Step 3/5: Configuring environment...${RESET}"
+GENERATED_JWT_SECRET="$(openssl rand -hex 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
 if [ ! -f apps/api/.env ]; then
   if [ -f apps/api/.env.example ]; then
     cp apps/api/.env.example apps/api/.env
     echo -e "  ${YELLOW}⚠${RESET} Created apps/api/.env from .env.example — please edit it with your credentials"
   else
-    cat > apps/api/.env << 'DOTENV'
+    cat > apps/api/.env << DOTENV
 # Required
 DATABASE_URL=postgresql://infraena:infraena@localhost:5433/infraena
 REDIS_URL=redis://localhost:6379
 VAULT_ADDR=http://localhost:8200
 VAULT_TOKEN=root
-JWT_SECRET=dev-secret-change-me-in-production-min-32-chars
+JWT_SECRET=${GENERATED_JWT_SECRET}
 
 # GitHub OAuth (required for login)
 GITHUB_CLIENT_ID=
@@ -98,6 +99,11 @@ DOTENV
   fi
 else
   echo -e "  ${GREEN}✓${RESET} apps/api/.env already exists"
+fi
+
+if grep -qE "^(JWT_SECRET=)(dev-secret-change-me-in-production-min-32-chars|your-jwt-secret-change-in-production)$" apps/api/.env 2>/dev/null; then
+  sed -i.bak "s|^JWT_SECRET=.*|JWT_SECRET=${GENERATED_JWT_SECRET}|" apps/api/.env && rm -f apps/api/.env.bak
+  echo -e "  ${GREEN}✓${RESET} Generated a random JWT_SECRET in apps/api/.env"
 fi
 
 if [ ! -f apps/web/.env ]; then

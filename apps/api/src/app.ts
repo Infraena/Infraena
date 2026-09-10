@@ -1,10 +1,12 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
+import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUi from "@fastify/swagger-ui";
 import { env } from "./lib/env.js";
+import { redactUrl } from "./lib/net.js";
 import { authRoutes } from "./routes/auth.js";
 import { serviceRoutes } from "./routes/services.js";
 import { teamRoutes } from "./routes/teams.js";
@@ -19,7 +21,23 @@ import {
 export const app = Fastify({
   logger: {
     level: process.env.NODE_ENV === "production" ? "info" : "debug",
+    redact: {
+      paths: ["req.headers.authorization", "req.headers.cookie"],
+      censor: "[REDACTED]",
+    },
+    serializers: {
+      req(req: { method: string; url: string; ip?: string }) {
+        return { method: req.method, url: redactUrl(req.url), remoteAddress: req.ip };
+      },
+    },
   },
+  trustProxy: env.TRUST_PROXY,
+});
+
+await app.register(helmet, {
+  contentSecurityPolicy: false,
+  xFrameOptions: { action: "deny" },
+  referrerPolicy: { policy: "no-referrer" },
 });
 
 await app.register(cors, {
@@ -59,9 +77,11 @@ await app.register(swagger, {
   },
 });
 
-await app.register(swaggerUi, {
-  routePrefix: "/docs",
-});
+if (process.env.NODE_ENV !== "production" || env.ENABLE_DOCS) {
+  await app.register(swaggerUi, {
+    routePrefix: "/docs",
+  });
+}
 
 const timers = new Map<string, number>();
 
@@ -73,7 +93,7 @@ app.addHook("onResponse", async (request, reply) => {
   const url = request.url;
   if (url.startsWith("/metrics") || url.startsWith("/socket.io") || url.startsWith("/docs")) return;
 
-  const route = url.split("?")[0];
+  const route = redactUrl(url.split("?")[0]);
   const method = request.method;
   const statusCode = String(reply.statusCode);
 
@@ -87,7 +107,13 @@ app.addHook("onResponse", async (request, reply) => {
   httpRequestsTotal.inc({ method, route, status_code: statusCode });
 });
 
-app.get("/metrics", async (_request, reply) => {
+app.get("/metrics", async (request, reply) => {
+  if (env.METRICS_TOKEN) {
+    const auth = request.headers.authorization;
+    if (auth !== `Bearer ${env.METRICS_TOKEN}`) {
+      return reply.status(401).send({ error: "Unauthorized" });
+    }
+  }
   const metrics = await metricsRegistry().metrics();
   reply.header("Content-Type", metricsRegistry().contentType);
   reply.send(metrics);
