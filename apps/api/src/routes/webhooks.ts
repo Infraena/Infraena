@@ -3,20 +3,26 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { WEBHOOK_EVENTS } from "@infraena/shared-types";
 import { prisma } from "../db/prisma.js";
-import { authMiddleware } from "../lib/auth.js";
+import { authMiddleware, requireAdmin } from "../lib/auth.js";
 import { parseInboundBody, generateWebhookToken } from "../lib/webhooks.js";
 import { emitWebhookEvent } from "../lib/socket.js";
 import { notify, deliverNotification } from "../lib/notify.js";
+import { validateOutboundUrlSync } from "../lib/net.js";
+
+const outboundUrlSchema = z
+  .string()
+  .max(2048)
+  .refine((u) => validateOutboundUrlSync(u).ok, "Must be an allowed http(s) URL");
 
 const outboundSchema = z.object({
   kind: z.enum(["slack", "discord", "generic"]),
-  url: z.string().url().max(2048).refine((u) => /^https?:/.test(u), "Must be an http(s) URL"),
+  url: outboundUrlSchema,
   events: z.array(z.enum([...WEBHOOK_EVENTS, "*"])).optional(),
 });
 
 const outboundPatchSchema = z.object({
   enabled: z.boolean().optional(),
-  url: z.string().url().max(2048).refine((u) => /^https?:/.test(u), "Must be an http(s) URL").optional(),
+  url: outboundUrlSchema.optional(),
   events: z.array(z.enum([...WEBHOOK_EVENTS, "*"])).optional(),
 });
 
@@ -115,7 +121,7 @@ export async function webhookRoutes(app: FastifyInstance) {
     return { inbound, outbound, recentEvents };
   });
 
-  app.post("/:slug/inbound/regenerate", { preHandler: [authMiddleware] }, async (request, reply) => {
+  app.post("/:slug/inbound/regenerate", { preHandler: [authMiddleware, requireAdmin] }, async (request, reply) => {
     const { slug } = request.params as { slug: string };
 
     const service = await prisma.service.findUnique({ where: { slug }, select: { id: true } });

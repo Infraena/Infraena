@@ -5,6 +5,9 @@ function jsonResponse(status: number): Response {
   return new Response(null, { status });
 }
 
+const lookup = (addresses: string[]) =>
+  vi.fn().mockResolvedValue(addresses.map((address) => ({ address, family: 4 })));
+
 describe("buildPayload", () => {
   it("builds a slack payload with text", () => {
     expect(buildPayload("slack", "hello")).toEqual({ text: "hello" });
@@ -31,7 +34,8 @@ describe("deliverNotification", () => {
       "hello",
       "service.ready",
       "demo-api",
-      fetchFn as unknown as typeof fetch
+      fetchFn as unknown as typeof fetch,
+      lookup(["12.34.56.78"])
     );
     expect(result).toEqual({ ok: true, status: 200 });
     expect(fetchFn).toHaveBeenCalledTimes(1);
@@ -47,7 +51,8 @@ describe("deliverNotification", () => {
       "hello",
       undefined,
       undefined,
-      fetchFn as unknown as typeof fetch
+      fetchFn as unknown as typeof fetch,
+      lookup(["12.34.56.78"])
     );
     expect(result.ok).toBe(false);
     expect(result.status).toBe(500);
@@ -60,10 +65,25 @@ describe("deliverNotification", () => {
       "hello",
       undefined,
       undefined,
-      fetchFn as unknown as typeof fetch
+      fetchFn as unknown as typeof fetch,
+      lookup(["93.184.216.34"])
     );
     expect(result.ok).toBe(false);
     expect(result.error).toContain("ECONNREFUSED");
+  });
+
+  it("blocks a destination that resolves to a reserved address without fetching", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse(200));
+    const result = await deliverNotification(
+      { id: null, kind: "generic", url: "http://metadata.test/hook" },
+      "hello",
+      undefined,
+      undefined,
+      fetchFn as unknown as typeof fetch,
+      lookup(["169.254.169.254"])
+    );
+    expect(result.ok).toBe(false);
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });
 

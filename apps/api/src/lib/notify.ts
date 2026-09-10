@@ -1,5 +1,6 @@
 import { env } from "./env.js";
 import { prisma } from "../db/prisma.js";
+import { validateOutboundUrl, type LookupFn } from "./net.js";
 import type { WebhookKind } from "@infraena/shared-types";
 
 export type NotifyEvent = {
@@ -36,13 +37,20 @@ export async function deliverNotification(
   message: string,
   event?: string,
   service?: string,
-  fetchFn: typeof fetch = fetch
+  fetchFn: typeof fetch = fetch,
+  lookupFn?: LookupFn
 ): Promise<{ ok: boolean; status?: number; error?: string }> {
+  const guard = await validateOutboundUrl(target.url, { allowPrivate: true }, lookupFn ?? undefined);
+  if (!guard.ok) {
+    return { ok: false, error: `Blocked destination: ${guard.reason ?? "not allowed"}` };
+  }
+
   try {
     const res = await fetchFn(target.url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(buildPayload(target.kind, message, event, service)),
+      redirect: "manual",
       signal: AbortSignal.timeout(env.NOTIFY_TIMEOUT_MS),
     });
     if (!res.ok) {
@@ -90,7 +98,7 @@ export async function notify(event: NotifyEvent): Promise<DeliverySummary> {
 
   const service = await prisma.service.findUnique({
     where: { id: event.serviceId },
-    select: { id: true, slug: true, name: true, githubRepoUrl: true },
+    select: { id: true, slug: true, name: true, repoUrl: true },
   });
   if (!service) return { delivered: 0, failed: 0 };
 

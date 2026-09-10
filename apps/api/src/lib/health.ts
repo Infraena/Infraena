@@ -1,8 +1,15 @@
+import { isIP } from "node:net";
 import { env } from "./env.js";
 import { prisma } from "../db/prisma.js";
 import { emitHealthUpdate } from "./socket.js";
 import { notify } from "./notify.js";
 import { healthChecksTotal } from "./metrics.js";
+import {
+  validateOutboundUrl,
+  validateOutboundUrlSync,
+  isReservedAddress,
+  type LookupFn,
+} from "./net.js";
 import type { HealthStatus } from "@infraena/shared-types";
 
 export type HealthResult = {
@@ -14,27 +21,39 @@ export type HealthResult = {
 export const MAX_HEALTH_URL_LENGTH = 500;
 
 export function isHealthUrlAllowed(url: string): boolean {
-  if (url.length > MAX_HEALTH_URL_LENGTH) return false;
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
+  const check = validateOutboundUrlSync(url, MAX_HEALTH_URL_LENGTH);
+  if (!check.ok) return false;
+  const hostname = new URL(url).hostname.replace(/^\[|\]$/g, "");
+  if (isIP(hostname) && isReservedAddress(hostname)) return false;
+  return true;
 }
 
 export async function runHealthCheck(
   url: string,
   timeoutMs = 5000,
-  fetchFn: typeof fetch = fetch
+  fetchFn: typeof fetch = fetch,
+  lookupFn?: LookupFn
 ): Promise<HealthResult> {
   const startedAt = Date.now();
+  const guard = await validateOutboundUrl(
+    url,
+    { allowPrivate: true },
+    lookupFn ?? undefined
+  );
+  if (!guard.ok) {
+    return {
+      status: "unhealthy",
+      latencyMs: Date.now() - startedAt,
+      detail: (guard.reason ?? "Blocked URL").slice(0, 200),
+    };
+  }
+
   let res: Response;
   try {
     res = await fetchFn(url, {
       method: "GET",
       headers: { Accept: "*/*" },
-      redirect: "follow",
+      redirect: "manual",
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
@@ -43,8 +62,11 @@ export async function runHealthCheck(
       : err instanceof Error ? err.message : "Network error";
     return { status: "unhealthy", latencyMs: Date.now() - startedAt, detail: detail.slice(0, 200) };
   }
+  if (res.status >= 300 && res.status < 400) {
+    return { status: "unhealthy", latencyMs: Date.now() - startedAt, detail: `Redirect blocked (HTTP ${res.status})` };
+  }
   return {
-    status: res.status >= 200 && res.status < 400 ? "healthy" : "unhealthy",
+    status: res.status >= 200 && res.status < 300 ? "healthy" : "unhealthy",
     latencyMs: Date.now() - startedAt,
     detail: `HTTP ${res.status}`,
   };
