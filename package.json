@@ -19,9 +19,6 @@
     "prettier": "^3.3.0",
     "turbo": "^2.4.0"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": ["prisma", "esbuild"]
-  },
   "engines": {
     "node": ">=20.0.0",
     "pnpm": ">=9.0.0"
