@@ -21,6 +21,7 @@ export function useProvisionLogs(serviceId: string | null) {
 
     const socket = io(WS_URL, {
       transports: ["websocket", "polling"],
+      withCredentials: true,
     });
 
     socket.on("connect", () => {
@@ -58,6 +59,7 @@ export function useHealthUpdates(serviceId: string | null) {
 
     const socket = io(WS_URL, {
       transports: ["websocket", "polling"],
+      withCredentials: true,
     });
 
     socket.on("connect", () => {
@@ -88,6 +90,7 @@ export function useDeploymentUpdates(serviceId: string | null) {
 
     const socket = io(WS_URL, {
       transports: ["websocket", "polling"],
+      withCredentials: true,
     });
 
     socket.on("connect", () => {
@@ -116,6 +119,7 @@ export function useCatalogLive() {
   useEffect(() => {
     const socket = io(WS_URL, {
       transports: ["websocket", "polling"],
+      withCredentials: true,
     });
 
     socket.on("connect", () => {
@@ -147,6 +151,7 @@ export function useWebhookEvents(serviceId: string | null) {
 
     const socket = io(WS_URL, {
       transports: ["websocket", "polling"],
+      withCredentials: true,
     });
 
     socket.on("connect", () => {
