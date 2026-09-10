@@ -37,3 +37,13 @@ export async function authMiddleware(
 export function getUser(request: FastifyRequest): JwtPayload | undefined {
   return (request as unknown as Record<string, JwtPayload>).user;
 }
+
+export async function requireAdmin(
+  request: FastifyRequest,
+  reply: FastifyReply
+) {
+  const user = getUser(request);
+  if (!user || user.role !== "admin") {
+    return reply.status(403).send({ error: "Admin role required" });
+  }
+}
