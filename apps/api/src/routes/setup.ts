@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { env } from "../lib/env.js";
 
-type Provider = "github-oauth" | "github-pat" | "terraform" | "vault" | "argocd";
+type Provider = "github-oauth" | "github-pat" | "gitlab-pat" | "terraform" | "vault" | "argocd";
 
 interface CheckResult {
   ok: boolean;
@@ -14,7 +14,7 @@ interface CheckResult {
 }
 
 export async function setupRoutes(app: FastifyInstance) {
-  app.get("/check", async () => {
+  app.get("/check", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async () => {
     const checks: Record<string, CheckResult> = {};
 
     // Database (already running since we're serving this request)
@@ -44,7 +44,7 @@ export async function setupRoutes(app: FastifyInstance) {
         if (res.ok) {
           checks.vault = { ok: true, message: "Vault healthy", required: true, envVars: ["VAULT_ADDR", "VAULT_TOKEN"], provider: "vault" };
         } else {
-          checks.vault = { ok: false, message: `Vault responded with ${res.status}`, detail: await res.text().catch(() => ""), required: true, envVars: ["VAULT_ADDR", "VAULT_TOKEN"], provider: "vault" };
+          checks.vault = { ok: false, message: `Vault responded with ${res.status}`, required: true, envVars: ["VAULT_ADDR", "VAULT_TOKEN"], provider: "vault" };
         }
       } catch (e) {
         checks.vault = { ok: false, message: "Vault unreachable", detail: (e as Error).message, required: true, envVars: ["VAULT_ADDR", "VAULT_TOKEN"], provider: "vault" };
@@ -53,7 +53,7 @@ export async function setupRoutes(app: FastifyInstance) {
 
     // GitHub
     if (!env.GITHUB_TOKEN || !env.GITHUB_ORG) {
-      checks.github = { ok: false, message: "Not configured — set GITHUB_TOKEN and GITHUB_ORG", required: true, envVars: ["GITHUB_TOKEN", "GITHUB_ORG"], provider: "github-pat" };
+      checks.github = { ok: false, message: "Not configured — set GITHUB_TOKEN and GITHUB_ORG", required: false, envVars: ["GITHUB_TOKEN", "GITHUB_ORG"], provider: "github-pat" };
     } else {
       try {
         const res = await fetch("https://api.github.com/user", {
@@ -62,20 +62,43 @@ export async function setupRoutes(app: FastifyInstance) {
         });
         if (res.ok) {
           const data = (await res.json()) as { login?: string };
-          checks.github = { ok: true, message: `Authenticated as ${data.login ?? "unknown"}`, required: true, envVars: ["GITHUB_TOKEN", "GITHUB_ORG"], provider: "github-pat" };
+          checks.github = { ok: true, message: `Authenticated as ${data.login ?? "unknown"}`, required: false, envVars: ["GITHUB_TOKEN", "GITHUB_ORG"], provider: "github-pat" };
         } else {
-          checks.github = { ok: false, message: `GitHub returned ${res.status}`, detail: await res.text().catch(() => ""), required: true, envVars: ["GITHUB_TOKEN", "GITHUB_ORG"], provider: "github-pat" };
+          checks.github = { ok: false, message: `GitHub returned ${res.status}`, required: false, envVars: ["GITHUB_TOKEN", "GITHUB_ORG"], provider: "github-pat" };
         }
       } catch (e) {
-        checks.github = { ok: false, message: "GitHub API unreachable", detail: (e as Error).message, required: true, envVars: ["GITHUB_TOKEN", "GITHUB_ORG"], provider: "github-pat" };
+        checks.github = { ok: false, message: "GitHub API unreachable", detail: (e as Error).message, required: false, envVars: ["GITHUB_TOKEN", "GITHUB_ORG"], provider: "github-pat" };
       }
     }
 
+    // GitLab
+    if (!env.GITLAB_TOKEN) {
+      checks.gitlab = { ok: false, message: "Not configured — set GITLAB_TOKEN (and GITLAB_GROUP)", required: false, envVars: ["GITLAB_TOKEN", "GITLAB_URL", "GITLAB_GROUP"], provider: "gitlab-pat" };
+    } else {
+      try {
+        const res = await fetch(`${env.GITLAB_URL.replace(/\/+$/, "")}/api/v4/user`, {
+          headers: { "PRIVATE-TOKEN": env.GITLAB_TOKEN },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (res.ok) {
+          checks.gitlab = { ok: true, message: "GitLab API connected", required: false, envVars: ["GITLAB_TOKEN", "GITLAB_URL", "GITLAB_GROUP"], provider: "gitlab-pat" };
+        } else {
+          checks.gitlab = { ok: false, message: `GitLab returned ${res.status}`, required: false, envVars: ["GITLAB_TOKEN", "GITLAB_URL", "GITLAB_GROUP"], provider: "gitlab-pat" };
+        }
+      } catch (e) {
+        checks.gitlab = { ok: false, message: "GitLab API unreachable", detail: (e as Error).message, required: false, envVars: ["GITLAB_TOKEN", "GITLAB_URL", "GITLAB_GROUP"], provider: "gitlab-pat" };
+      }
+    }
+
+    // At least one SCM provider must be configured
+    const scmOk = checks.github.ok || checks.gitlab.ok;
+    checks.scm = { ok: scmOk, message: scmOk ? "At least one SCM provider is configured" : "Configure GitHub or GitLab", required: true, envVars: [] };
+
     // GitHub OAuth
     if (!env.GITHUB_CLIENT_ID || !env.GITHUB_CLIENT_SECRET) {
-      checks.githubOAuth = { ok: false, message: "Not configured — set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET", required: true, envVars: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"], provider: "github-oauth" };
+      checks.githubOAuth = { ok: false, message: "Not configured — set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET", required: false, envVars: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"], provider: "github-oauth" };
     } else {
-      checks.githubOAuth = { ok: true, message: `OAuth App configured (${env.GITHUB_CLIENT_ID.slice(0, 8)}...)`, required: true, envVars: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"], provider: "github-oauth" };
+      checks.githubOAuth = { ok: true, message: `OAuth App configured (${env.GITHUB_CLIENT_ID.slice(0, 8)}...)`, required: false, envVars: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"], provider: "github-oauth" };
     }
 
     // Terraform Cloud
@@ -90,7 +113,7 @@ export async function setupRoutes(app: FastifyInstance) {
         if (res.ok) {
           checks.terraform = { ok: true, message: `Terraform Cloud connected (org: ${env.TERRAFORM_ORG})`, required: true, envVars: ["TERRAFORM_CLOUD_TOKEN", "TERRAFORM_ORG"], provider: "terraform" };
         } else {
-          checks.terraform = { ok: false, message: `Terraform returned ${res.status}`, detail: await res.text().catch(() => ""), required: true, envVars: ["TERRAFORM_CLOUD_TOKEN", "TERRAFORM_ORG"], provider: "terraform" };
+          checks.terraform = { ok: false, message: `Terraform returned ${res.status}`, required: true, envVars: ["TERRAFORM_CLOUD_TOKEN", "TERRAFORM_ORG"], provider: "terraform" };
         }
       } catch (e) {
         checks.terraform = { ok: false, message: "Terraform Cloud unreachable", detail: (e as Error).message, required: true, envVars: ["TERRAFORM_CLOUD_TOKEN", "TERRAFORM_ORG"], provider: "terraform" };
@@ -124,7 +147,7 @@ export async function setupRoutes(app: FastifyInstance) {
   });
 
   const validateSchema = z.object({
-    provider: z.enum(["github", "terraform"]),
+    provider: z.enum(["github", "gitlab", "terraform"]),
     token: z.string().min(1).max(200),
   });
 
@@ -148,8 +171,7 @@ export async function setupRoutes(app: FastifyInstance) {
             signal: AbortSignal.timeout(5000),
           });
           if (!userRes.ok) {
-            const detail = await userRes.text().catch(() => "");
-            return { ok: false, message: `GitHub rejected the token (${userRes.status})`, detail: detail.slice(0, 200) };
+            return { ok: false, message: `GitHub rejected the token (${userRes.status})` };
           }
           const user = (await userRes.json()) as { login?: string };
           const memberRes = await fetch(`https://api.github.com/orgs/${env.GITHUB_ORG}/members/${user.login}`, {
@@ -157,10 +179,31 @@ export async function setupRoutes(app: FastifyInstance) {
             signal: AbortSignal.timeout(5000),
           });
           if (!memberRes.ok) {
-            const detail = await memberRes.text().catch(() => "");
-            return { ok: false, message: `Token valid, but not a member of org ${env.GITHUB_ORG}`, detail: detail.slice(0, 200) };
+            return { ok: false, message: `Token valid, but not a member of org ${env.GITHUB_ORG}` };
           }
           return { ok: true, message: `Authenticated as ${user.login ?? "unknown"} with org access` };
+        }
+
+        if (provider === "gitlab") {
+          const base = env.GITLAB_URL.replace(/\/+$/, "");
+          const userRes = await fetch(`${base}/api/v4/user`, {
+            headers: { "PRIVATE-TOKEN": token },
+            signal: AbortSignal.timeout(5000),
+          });
+          if (!userRes.ok) {
+            return { ok: false, message: `GitLab rejected the token (${userRes.status})` };
+          }
+          const gitlabUser = (await userRes.json()) as { username?: string };
+          if (env.GITLAB_GROUP) {
+            const groupRes = await fetch(`${base}/api/v4/groups/${encodeURIComponent(env.GITLAB_GROUP)}`, {
+              headers: { "PRIVATE-TOKEN": token },
+              signal: AbortSignal.timeout(5000),
+            });
+            if (!groupRes.ok) {
+              return { ok: false, message: `Token valid, but group ${env.GITLAB_GROUP} not found or inaccessible` };
+            }
+          }
+          return { ok: true, message: `Authenticated as ${gitlabUser.username ?? "unknown"}` };
         }
 
         if (!env.TERRAFORM_ORG) {
@@ -171,8 +214,7 @@ export async function setupRoutes(app: FastifyInstance) {
           signal: AbortSignal.timeout(5000),
         });
         if (!res.ok) {
-          const detail = await res.text().catch(() => "");
-          return { ok: false, message: `Terraform rejected the token (${res.status})`, detail: detail.slice(0, 200) };
+          return { ok: false, message: `Terraform rejected the token (${res.status})` };
         }
         return { ok: true, message: `Terraform Cloud connected (org: ${env.TERRAFORM_ORG})` };
       } catch (e) {

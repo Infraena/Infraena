@@ -18,6 +18,8 @@ const serviceLabels: Record<string, string> = {
   redis: "Redis",
   vault: "HashiCorp Vault",
   github: "GitHub API",
+  gitlab: "GitLab API",
+  scm: "Source control (GitHub or GitLab)",
   githubOAuth: "GitHub OAuth",
   terraform: "Terraform Cloud",
   argocd: "Argo CD",
@@ -48,7 +50,7 @@ export function SetupPage({ onNavigate }: { onNavigate: (path: string) => void }
     : false;
 
   const validateToken =
-    (provider: "github" | "terraform") =>
+    (provider: "github" | "gitlab" | "terraform") =>
     async (token: string): Promise<ValidateResult> => {
       return api.post<ValidateResult>("/api/setup/validate", { provider, token });
     };

@@ -9,7 +9,7 @@ export interface ValidateResult {
 }
 
 interface TokenValidateFieldProps {
-  provider: "github" | "terraform";
+  provider: "github" | "gitlab" | "terraform";
   validate: (token: string) => Promise<ValidateResult>;
 }
 

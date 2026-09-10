@@ -6,12 +6,13 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { prisma } from "../db/prisma.js";
 import { env } from "../lib/env.js";
-import { githubQueue, terraformQueue, vaultQueue } from "../lib/queue.js";
-import { authMiddleware, getUser } from "../lib/auth.js";
+import { githubQueue, gitlabQueue, terraformQueue, vaultQueue } from "../lib/queue.js";
+import { authMiddleware, requireAdmin, getUser } from "../lib/auth.js";
 import { isHealthUrlAllowed, performHealthCheck } from "../lib/health.js";
 import { triggerAppSync } from "../lib/argo.js";
 import { generateWebhookToken } from "../lib/webhooks.js";
 import { notify } from "../lib/notify.js";
+import { detectRepoProvider, encodeProjectPath, gitlabApiUrl, parseRepoPath } from "../lib/gitlab.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const templatesPath = join(__dirname, "..", "..", "..", "..", "templates", "index.json");
@@ -31,8 +32,27 @@ function getTemplates() {
   return templatesCache ?? [];
 }
 
-async function deleteGitHubRepo(url: string | null) {
-  if (!url || !env.GITHUB_TOKEN) return;
+async function deleteRepo(url: string | null, provider: string | null) {
+  if (!url) return;
+  const effective = provider ?? detectRepoProvider(url, env.GITLAB_URL);
+
+  if (effective === "gitlab") {
+    if (!env.GITLAB_TOKEN) return;
+    const repoPath = parseRepoPath(url);
+    if (!repoPath) return;
+    try {
+      await fetch(gitlabApiUrl(env.GITLAB_URL, `projects/${encodeProjectPath(repoPath)}`), {
+        method: "DELETE",
+        headers: { "PRIVATE-TOKEN": env.GITLAB_TOKEN },
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (err) {
+      console.error(`Failed to delete GitLab project ${url}:`, (err as Error).message);
+    }
+    return;
+  }
+
+  if (effective !== "github" || !env.GITHUB_TOKEN) return;
   try {
     const parts = url.replace("https://github.com/", "").replace(/\/$/, "").split("/");
     if (parts.length < 2) return;
@@ -56,6 +76,11 @@ const categories = {
 
 type CategoryKey = keyof typeof categories;
 
+const provisioningSchema = z
+  .array(z.enum(["github", "gitlab", "terraform", "vault"]))
+  .refine((s) => !(s.includes("github") && s.includes("gitlab")), "Select either GitHub or GitLab, not both")
+  .optional();
+
 const createServiceSchema = z.object({
   name: z
     .string()
@@ -67,15 +92,18 @@ const createServiceSchema = z.object({
   category: z.enum(Object.keys(categories) as [CategoryKey, ...CategoryKey[]]),
   languages: z.array(z.string()),
   template: z.string().optional(),
-  provisioning: z.array(z.enum(["github", "terraform", "vault"])).optional(),
+  provisioning: provisioningSchema,
   enableBranchProtection: z.boolean().optional(),
 });
 
 const importServiceSchema = z.object({
-  repoUrl: z.string().url().refine((u) => /github\.com\/[^/]+\/[^/]+/.test(u), "Must be a GitHub repo URL"),
+  repoUrl: z
+    .string()
+    .url()
+    .refine((u) => detectRepoProvider(u, env.GITLAB_URL) !== null, "Must be a GitHub or GitLab repo URL"),
   name: z.string().min(3).max(40).regex(/^[a-z][a-z0-9-]*$/).optional(),
   teamId: z.string().uuid(),
-  provisioning: z.array(z.enum(["github", "terraform", "vault"])).optional(),
+  provisioning: provisioningSchema,
   enableBranchProtection: z.boolean().optional(),
 });
 
@@ -85,6 +113,28 @@ const patchServiceSchema = z.object({
   healthUrl: z
     .union([z.string().max(500).refine(isHealthUrlAllowed, "Must be an http(s) URL"), z.null()])
     .optional(),
+});
+
+const deploySchema = z.object({
+  environment: z.enum(["staging", "production"]).optional(),
+  version: z.string().min(1).max(100).optional(),
+});
+
+const provisionBodySchema = z
+  .object({
+    steps: z.array(z.enum(["github", "gitlab", "terraform", "vault"])).optional(),
+    enableBranchProtection: z.boolean().optional(),
+  })
+  .refine((b) => !(b.steps?.includes("github") && b.steps?.includes("gitlab")), "Select either GitHub or GitLab, not both");
+
+const bulkDeleteSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(100),
+});
+
+const dependencySchema = z.object({
+  targetSlug: z.string().min(1).max(100),
+  type: z.enum(["api", "database", "event", "config"]).optional(),
+  label: z.string().max(100).optional(),
 });
 
 export async function serviceRoutes(app: FastifyInstance) {
@@ -97,7 +147,11 @@ export async function serviceRoutes(app: FastifyInstance) {
     const name = query.name ?? "my-service";
     const slug = name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
     const provisioning = query.provisioning
-      ? query.provisioning.split(",").filter((s): s is "github" | "terraform" | "vault" => ["github", "terraform", "vault"].includes(s))
+      ? query.provisioning
+          .split(",")
+          .filter((s): s is "github" | "gitlab" | "terraform" | "vault" =>
+            ["github", "gitlab", "terraform", "vault"].includes(s)
+          )
       : ["github", "terraform", "vault"];
     const enableBranchProtection = query.enableBranchProtection !== "false";
     const template = query.template;
@@ -117,6 +171,16 @@ export async function serviceRoutes(app: FastifyInstance) {
         willPushTemplate: provisioning.includes("github") && !!env.GITHUB_TOKEN && !!template,
         willAddTopic: provisioning.includes("github") && !!env.GITHUB_TOKEN,
         notes: !env.GITHUB_TOKEN ? "GITHUB_TOKEN not configured — will skip" : null,
+      },
+      gitlab: {
+        willProvision: provisioning.includes("gitlab"),
+        baseUrl: env.GITLAB_URL,
+        namespace: env.GITLAB_GROUP || "(personal namespace)",
+        project: slug,
+        template: template || tpl?.name || "(none)",
+        enableBranchProtection,
+        willCreateProject: provisioning.includes("gitlab") && !!env.GITLAB_TOKEN,
+        notes: !env.GITLAB_TOKEN ? "GITLAB_TOKEN not configured — will skip" : null,
       },
       terraform: {
         willProvision: provisioning.includes("terraform"),
@@ -264,6 +328,7 @@ export async function serviceRoutes(app: FastifyInstance) {
         category,
         languages: languages ?? [],
         provisioning: selectedSteps,
+        repoProvider: selectedSteps.includes("gitlab") ? "gitlab" : selectedSteps.includes("github") ? "github" : null,
         teamId,
         ownerId: user?.sub
           ? await prisma.user.findUnique({ where: { id: user.sub } }).then((u) => u?.id ?? null)
@@ -284,6 +349,7 @@ export async function serviceRoutes(app: FastifyInstance) {
 
     const allJobTypes = [
       { type: "github" as const, queue: githubQueue },
+      { type: "gitlab" as const, queue: gitlabQueue },
       { type: "terraform" as const, queue: terraformQueue },
       { type: "vault" as const, queue: vaultQueue },
     ];
@@ -317,7 +383,7 @@ export async function serviceRoutes(app: FastifyInstance) {
           languages: service.languages,
           template: template ?? languages?.[0] ?? category,
         };
-        if (type === "github") {
+        if (type === "github" || type === "gitlab") {
           (jobData as Record<string, unknown>).enableBranchProtection = enableBranchProtection ?? true;
         }
         await queue.add(type, jobData, {
@@ -340,11 +406,14 @@ export async function serviceRoutes(app: FastifyInstance) {
     const { repoUrl, name, teamId, provisioning, enableBranchProtection } = parseResult.data;
     const user = getUser(request);
 
-    const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git|\/|$)/);
-    if (!match) {
-      return reply.status(400).send({ error: "Invalid GitHub repo URL" });
+    const provider = detectRepoProvider(repoUrl, env.GITLAB_URL);
+    const repoPath = parseRepoPath(repoUrl);
+    if (!provider || !repoPath) {
+      return reply.status(400).send({ error: "Invalid repository URL" });
     }
-    const [, owner, repoName] = match;
+    const pathParts = repoPath.split("/");
+    const repoName = pathParts[pathParts.length - 1];
+    const owner = pathParts[0];
     const slug = name?.toLowerCase().replace(/[^a-z0-9-]/g, "-") ?? repoName.toLowerCase().replace(/[^a-z0-9-]/g, "-");
 
     const existingSlug = await prisma.service.findUnique({ where: { slug } });
@@ -357,23 +426,45 @@ export async function serviceRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Team not found" });
     }
 
-    if (!env.GITHUB_TOKEN) {
-      return reply.status(400).send({ error: "GITHUB_TOKEN not configured — cannot verify repo access" });
-    }
-
-    const octokit = new Octokit({ auth: env.GITHUB_TOKEN });
-    try {
-      const { data: repo } = await octokit.rest.repos.get({ owner, repo: repoName });
-      if (!repo) {
-        return reply.status(404).send({ error: "Repository not found or no access" });
+    if (provider === "github") {
+      if (!env.GITHUB_TOKEN) {
+        return reply.status(400).send({ error: "GITHUB_TOKEN not configured — cannot verify repo access" });
       }
-    } catch (e: unknown) {
-      const status = (e as { status?: number }).status;
-      if (status === 404) return reply.status(404).send({ error: "Repository not found or no access" });
-      return reply.status(400).send({ error: `Cannot access repo: ${(e as Error).message}` });
+      const octokit = new Octokit({ auth: env.GITHUB_TOKEN });
+      try {
+        const { data: repo } = await octokit.rest.repos.get({ owner, repo: repoName });
+        if (!repo) {
+          return reply.status(404).send({ error: "Repository not found or no access" });
+        }
+      } catch (e: unknown) {
+        const status = (e as { status?: number }).status;
+        if (status === 404) return reply.status(404).send({ error: "Repository not found or no access" });
+        return reply.status(400).send({ error: `Cannot access repo: ${(e as Error).message}` });
+      }
+    } else {
+      if (!env.GITLAB_TOKEN) {
+        return reply.status(400).send({ error: "GITLAB_TOKEN not configured — cannot verify repo access" });
+      }
+      try {
+        const res = await fetch(gitlabApiUrl(env.GITLAB_URL, `projects/${encodeProjectPath(repoPath)}`), {
+          headers: { "PRIVATE-TOKEN": env.GITLAB_TOKEN },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!res.ok) {
+          if (res.status === 404) return reply.status(404).send({ error: "Repository not found or no access" });
+          return reply.status(400).send({ error: `Cannot access repo (${res.status})` });
+        }
+      } catch (e: unknown) {
+        return reply.status(400).send({ error: `Cannot access repo: ${(e as Error).message}` });
+      }
     }
 
-    const selectedSteps = provisioning ?? ["github", "terraform", "vault"];
+    const requestedSteps = provisioning ?? ["github", "terraform", "vault"];
+    const scmRequested = requestedSteps.includes("github") || requestedSteps.includes("gitlab");
+    const selectedSteps = [
+      ...requestedSteps.filter((s) => s !== "github" && s !== "gitlab"),
+      ...(scmRequested ? [provider] : []),
+    ];
     const initialStatus = selectedSteps.length === 0 ? "ready" : "provisioning";
 
     const service = await prisma.service.create({
@@ -384,7 +475,8 @@ export async function serviceRoutes(app: FastifyInstance) {
         category: "other",
         languages: [],
         provisioning: selectedSteps,
-        githubRepoUrl: `https://github.com/${owner}/${repoName}`,
+        repoUrl: repoUrl.replace(/\.git$/, ""),
+        repoProvider: provider,
         teamId,
         ownerId: user?.sub
           ? await prisma.user.findUnique({ where: { id: user.sub } }).then((u) => u?.id ?? null)
@@ -405,6 +497,7 @@ export async function serviceRoutes(app: FastifyInstance) {
 
     const allJobTypes = [
       { type: "github" as const, queue: githubQueue },
+      { type: "gitlab" as const, queue: gitlabQueue },
       { type: "terraform" as const, queue: terraformQueue },
       { type: "vault" as const, queue: vaultQueue },
     ];
@@ -438,6 +531,10 @@ export async function serviceRoutes(app: FastifyInstance) {
           (jobData as Record<string, unknown>).enableBranchProtection = enableBranchProtection ?? true;
           (jobData as Record<string, unknown>).repoOwner = owner;
           (jobData as Record<string, unknown>).repoName = repoName;
+        }
+        if (type === "gitlab") {
+          (jobData as Record<string, unknown>).enableBranchProtection = enableBranchProtection ?? true;
+          (jobData as Record<string, unknown>).repoPath = repoPath;
         }
         await queue.add(type, jobData, {
           jobId: job.id,
@@ -498,11 +595,11 @@ export async function serviceRoutes(app: FastifyInstance) {
 
   app.post("/:slug/deploy", { preHandler: [authMiddleware] }, async (request, reply) => {
     const { slug } = request.params as { slug: string };
-    const body = (request.body ?? {}) as {
-      environment?: string;
-      version?: string;
-    };
-    const { environment = "staging", version = "latest" } = body;
+    const parsed = deploySchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.flatten().fieldErrors });
+    }
+    const { environment = "staging", version = "latest" } = parsed.data;
 
     const service = await prisma.service.findUnique({ where: { slug } });
     if (!service) {
@@ -671,19 +768,20 @@ export async function serviceRoutes(app: FastifyInstance) {
     return activity.slice(0, 20);
   });
 
-  app.post("/bulk-delete", { preHandler: [authMiddleware] }, async (request, reply) => {
-    const body = request.body as { ids: string[] } | undefined;
-    if (!body?.ids || !Array.isArray(body.ids) || body.ids.length === 0) {
-      return reply.status(400).send({ error: "Provide an array of service ids" });
+  app.post("/bulk-delete", { preHandler: [authMiddleware, requireAdmin] }, async (request, reply) => {
+    const parsed = bulkDeleteSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "Provide an array of 1-100 service ids" });
     }
+    const body = parsed.data;
 
     const services = await prisma.service.findMany({
       where: { id: { in: body.ids } },
-      select: { id: true, githubRepoUrl: true },
+      select: { id: true, repoUrl: true, repoProvider: true },
     });
 
     for (const svc of services) {
-      await deleteGitHubRepo(svc.githubRepoUrl);
+      await deleteRepo(svc.repoUrl, svc.repoProvider);
       await prisma.provisionJob.deleteMany({ where: { serviceId: svc.id } });
       await prisma.deployment.deleteMany({ where: { serviceId: svc.id } });
       await prisma.webhookEvent.deleteMany({ where: { serviceId: svc.id } });
@@ -709,11 +807,11 @@ export async function serviceRoutes(app: FastifyInstance) {
 
   app.post("/:slug/provision", { preHandler: [authMiddleware] }, async (request, reply) => {
     const { slug } = request.params as { slug: string };
-    const body = (request.body ?? {}) as {
-      steps?: ("github" | "terraform" | "vault")[];
-      enableBranchProtection?: boolean;
-    };
-    const { steps, enableBranchProtection } = body;
+    const parsed = provisionBodySchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.flatten().fieldErrors });
+    }
+    const { steps, enableBranchProtection } = parsed.data;
 
     const service = await prisma.service.findUnique({
       where: { slug },
@@ -739,6 +837,7 @@ export async function serviceRoutes(app: FastifyInstance) {
 
     const allJobTypes = [
       { type: "github" as const, queue: githubQueue },
+      { type: "gitlab" as const, queue: gitlabQueue },
       { type: "terraform" as const, queue: terraformQueue },
       { type: "vault" as const, queue: vaultQueue },
     ];
@@ -768,8 +867,11 @@ export async function serviceRoutes(app: FastifyInstance) {
           languages: service.languages,
           template: undefined,
         };
-        if (type === "github") {
+        if (type === "github" || type === "gitlab") {
           (jobData as Record<string, unknown>).enableBranchProtection = enableBranchProtection ?? true;
+        }
+        if (type === "gitlab" && service.repoProvider === "gitlab" && service.repoUrl) {
+          (jobData as Record<string, unknown>).repoPath = parseRepoPath(service.repoUrl) ?? undefined;
         }
         await queue.add(type, jobData, {
           jobId: job.id,
@@ -807,11 +909,11 @@ export async function serviceRoutes(app: FastifyInstance) {
 
   app.post("/:slug/dependencies", { preHandler: [authMiddleware] }, async (request, reply) => {
     const { slug } = request.params as { slug: string };
-    const body = (request.body ?? {}) as {
-      targetSlug: string;
-      type?: string;
-      label?: string;
-    };
+    const parsed = dependencySchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.flatten().fieldErrors });
+    }
+    const body = parsed.data;
 
     const service = await prisma.service.findUnique({ where: { slug } });
     if (!service) {
@@ -870,7 +972,7 @@ export async function serviceRoutes(app: FastifyInstance) {
     return { success: true };
   });
 
-  app.delete("/:slug", { preHandler: [authMiddleware] }, async (request, reply) => {
+  app.delete("/:slug", { preHandler: [authMiddleware, requireAdmin] }, async (request, reply) => {
     const { slug } = request.params as { slug: string };
 
     const service = await prisma.service.findUnique({ where: { slug } });
@@ -878,7 +980,7 @@ export async function serviceRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Service not found" });
     }
 
-    await deleteGitHubRepo(service.githubRepoUrl);
+    await deleteRepo(service.repoUrl, service.repoProvider);
     await prisma.serviceDependency.deleteMany({ where: { OR: [{ sourceServiceId: service.id }, { targetServiceId: service.id }] } });
     await prisma.provisionJob.deleteMany({ where: { serviceId: service.id } });
     await prisma.deployment.deleteMany({ where: { serviceId: service.id } });
@@ -886,6 +988,6 @@ export async function serviceRoutes(app: FastifyInstance) {
     await prisma.webhook.deleteMany({ where: { serviceId: service.id } });
     await prisma.service.delete({ where: { id: service.id } });
 
-    return { success: true, repoDeleted: !!service.githubRepoUrl };
+    return { success: true, repoDeleted: !!service.repoUrl };
   });
 }

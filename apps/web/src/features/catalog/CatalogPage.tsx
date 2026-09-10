@@ -486,8 +486,8 @@ export function CatalogPage({ onNavigate }: { onNavigate: (path: string) => void
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {service.githubRepoUrl && (
-                          <a href={service.githubRepoUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
+                        {service.repoUrl && (
+                          <a href={service.repoUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>
                             <Button variant="ghost" size="icon" className="h-7 w-7"><ExternalLink className="w-3.5 h-3.5" /></Button>
                           </a>
                         )}
@@ -541,11 +541,11 @@ export function CatalogPage({ onNavigate }: { onNavigate: (path: string) => void
             <h3 className="text-sm font-semibold mb-4">Import repository</h3>
             <div className="space-y-4 mb-5">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">GitHub Repository URL</label>
+                <label className="text-xs font-medium text-muted-foreground">GitHub or GitLab Repository URL</label>
                 <Input
                   value={importUrl}
                   onChange={(e) => setImportUrl(e.target.value)}
-                  placeholder="https://github.com/owner/repo"
+                  placeholder="https://github.com/owner/repo or https://gitlab.com/group/project"
                   className="h-8 text-xs font-mono"
                 />
               </div>
@@ -565,7 +565,7 @@ export function CatalogPage({ onNavigate }: { onNavigate: (path: string) => void
               <div className="space-y-2">
                 <label className="text-xs font-medium text-muted-foreground">Apply provisioning</label>
                 {([
-                  { key: "github", label: "GitHub topic + branch protection" },
+                  { key: "github", label: "Topic + branch protection" },
                   { key: "terraform", label: "Terraform Cloud workspace" },
                   { key: "vault", label: "Vault secrets" },
                 ] as const).map(({ key, label }) => {

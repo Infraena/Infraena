@@ -74,7 +74,7 @@ async function cmdList() {
     const statusColor = s.status === "ready" ? "green" : s.status === "failed" ? "red" : "yellow";
     console.log(`  ${color("cyan", s.name.padEnd(24))} ${color(statusColor, s.status.padEnd(14))} ${s.slug.padEnd(28)} ${color("dim", s.category)}`);
     if (s.languages.length > 0) console.log(color("dim", `    Languages: ${s.languages.join(", ")}`));
-    if (s.githubRepoUrl) console.log(color("dim", `    Repo: ${s.githubRepoUrl}`));
+    if (s.repoUrl) console.log(color("dim", `    Repo: ${s.repoUrl}`));
   }
   if (counters) {
     console.log(color("dim", `\n  Ready: ${counters.ready ?? 0}  Provisioning: ${counters.provisioning ?? 0}  Failed: ${counters.failed ?? 0}`));
@@ -115,6 +115,7 @@ async function cmdCreate(name, template, options = {}) {
   }
 
   console.log(color("dim", `Creating ${name} with template ${tpl.name}...`));
+  const provider = options.provider === "gitlab" ? "gitlab" : "github";
   const payload = {
     name,
     description: options.description ?? null,
@@ -122,6 +123,7 @@ async function cmdCreate(name, template, options = {}) {
     category: tpl.category,
     languages: [tpl.id],
     template: tpl.id,
+    provisioning: [provider, "terraform", "vault"],
   };
 
   try {
@@ -155,6 +157,7 @@ function help() {
   console.log(`  ${color("cyan", "idp templates")}          List available project templates`);
   console.log(`  ${color("cyan", "idp create <name>")}      Create a new service`);
   console.log(`       ${color("dim", "--template <id>")}      Pick a specific template`);
+  console.log(`       ${color("dim", "--provider <github|gitlab>")}  Source control provider (default: github)`);
   console.log(`       ${color("dim", "--description <text>")}  Add a description`);
   console.log(`  ${color("cyan", "idp list")}               List all services`);
   console.log(`  ${color("cyan", "idp delete <slug>")}      Delete a service`);
@@ -169,6 +172,7 @@ const options = {};
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--template" && args[i + 1]) options.template = args[++i];
   else if (args[i] === "--team" && args[i + 1]) options.team = args[++i];
+  else if (args[i] === "--provider" && args[i + 1]) options.provider = args[++i];
   else if (args[i] === "--description" && args[i + 1]) options.description = args[++i];
 }
 

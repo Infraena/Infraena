@@ -33,10 +33,13 @@ your GitHub OAuth credentials to log in and create services.
 - **Self-service creation** — wizard that provisions infrastructure in
   minutes. Multi-category language selection with per-stack badges. Dry-run
   preview shows exactly what will be created before confirming.
-- **Modular provisioning** — choose which workers to run (GitHub, Terraform,
-  Vault) per service. Re-provision missing or failed steps later.
-- **Import existing repos** — bring your own GitHub repos into the platform
-  with full provisioning applied retroactively.
+- **Modular provisioning** — choose which workers to run (GitHub, GitLab,
+  Terraform, Vault) per service. Re-provision missing or failed steps later.
+- **GitHub and GitLab** — pick your source control provider per service
+  (gitlab.com or self-managed via `GITLAB_URL`); create the repo/project, push
+  the template, add the `infraena-managed` topic and protect `main`.
+- **Import existing repos** — bring your own GitHub or GitLab repos into the
+  platform with full provisioning applied retroactively.
 - **Service detail** — inline editing of name and description, activity
   timeline, paginated deployments panel, copy to clipboard.
 - **Real health checks** — per-service HTTP health check against a
@@ -61,13 +64,15 @@ your GitHub OAuth credentials to log in and create services.
   services.
 - **Real-time progress** — WebSocket logs for every provisioning step.
 - **GitHub OAuth** — log in with your GitHub account.
-- **Async provisioning** (3 background workers):
+- **Async provisioning** (4 background workers):
   - **GitHub** — creates repo (from template or blank), adds branch
     protection and `infraena-managed` topic.
+  - **GitLab** — creates project, pushes the template in one commit, adds the
+    `infraena-managed` topic and protects `main`.
   - **Terraform Cloud** — creates workspace with variables.
   - **HashiCorp Vault** — enables KV mount, creates ACL policy and AppRole
     credentials.
-- **Complete cleanup** — deleting a service also removes its GitHub
+- **Complete cleanup** — deleting a service also removes its GitHub or GitLab
   repository and associated records.
 - **Prometheus metrics** — HTTP requests, latency, job duration, error rates.
 - **Grafana dashboard** — pre-built dashboard with 7 panels.
@@ -133,6 +138,11 @@ GITHUB_ORG=<your GitHub username or organization>
 # GitHub API (optional — worker skips if missing. Requires "repo" + "delete_repo" scopes)
 GITHUB_TOKEN=<personal access token>
 
+# GitLab API (optional — worker skips if missing. Requires the "api" scope)
+GITLAB_TOKEN=<personal access token>
+GITLAB_URL=https://gitlab.com          # or your self-managed instance
+GITLAB_GROUP=<group or subgroup path>  # target namespace for new projects
+
 # Terraform Cloud (optional — worker skips if missing)
 TERRAFORM_CLOUD_TOKEN=
 TERRAFORM_ORG=
@@ -191,7 +201,7 @@ the database.
 | GET | `/api/services/templates` | List available project templates |
 | GET | `/api/services/preview` | Dry-run preview: `?name=&template=&provisioning=&enableBranchProtection=` |
 | POST | `/api/services` | Create service, enqueue 3 workers |
-| POST | `/api/services/import` | Import existing GitHub repo `{ repoUrl, teamId, provisioning?, enableBranchProtection? }` |
+| POST | `/api/services/import` | Import an existing GitHub or GitLab repo `{ repoUrl, teamId, provisioning?, enableBranchProtection? }` |
 | POST | `/api/services/bulk-delete` | Bulk delete `{ ids: [...] }` with repo cleanup |
 | GET | `/api/services/:slug` | Detail with team, owner, jobs, deployments |
 | PATCH | `/api/services/:slug` | Edit name and/or description; optional `healthUrl` (or `null` to disable health checks) |

@@ -1,4 +1,4 @@
-export type Provider = "github-oauth" | "github-pat" | "terraform" | "vault" | "argocd";
+export type Provider = "github-oauth" | "github-pat" | "gitlab-pat" | "terraform" | "vault" | "argocd";
 
 export interface CheckResult {
   ok: boolean;
@@ -15,8 +15,9 @@ export interface ProviderGuide {
   links?: { label: string; href: string }[];
 }
 
-export const TOKEN_PROVIDERS: Record<string, "github" | "terraform"> = {
+export const TOKEN_PROVIDERS: Record<string, "github" | "gitlab" | "terraform"> = {
   "github-pat": "github",
+  "gitlab-pat": "gitlab",
   terraform: "terraform",
 };
 
@@ -42,6 +43,16 @@ export const providerGuides: Record<Provider, ProviderGuide> = {
       "Add GITHUB_TOKEN=... and GITHUB_ORG=... to apps/api/.env, then restart pnpm dev",
     ],
     links: [{ label: "Create GitHub PAT", href: "https://github.com/settings/tokens/new" }],
+  },
+  "gitlab-pat": {
+    title: "GitLab PAT (Personal Access Token)",
+    steps: [
+      "Create a PAT at gitlab.com/-/user_settings/personal_access_tokens (or your self-managed instance)",
+      "Select the api scope",
+      "Paste the token below and validate it",
+      "Add GITLAB_TOKEN=..., GITLAB_URL=... and GITLAB_GROUP=... to apps/api/.env, then restart pnpm dev",
+    ],
+    links: [{ label: "Create GitLab PAT", href: "https://gitlab.com/-/user_settings/personal_access_tokens" }],
   },
   "github-oauth": {
     title: "GitHub OAuth App",

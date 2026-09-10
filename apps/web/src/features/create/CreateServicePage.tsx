@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import type { Service, ServiceCategory } from "@infraena/shared-types";
+import type { Service, ServiceCategory, ProvisioningStep } from "@infraena/shared-types";
 import { CATEGORIES } from "@infraena/shared-types";
 import { api } from "@/lib/api";
 import { useProvisionLogs } from "@/lib/websocket";
@@ -28,6 +28,7 @@ import {
   Box,
   ExternalLink,
   Github,
+  Gitlab,
   Server,
   Key,
 } from "lucide-react";
@@ -96,9 +97,20 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [provisioning, setProvisioning] = useState<string[]>(["github", "terraform", "vault"]);
+  const [provisioning, setProvisioning] = useState<ProvisioningStep[]>(["github", "terraform", "vault"]);
   const [enableBranchProtection, setEnableBranchProtection] = useState(true);
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+
+  const scmProvider: "github" | "gitlab" = provisioning.includes("gitlab") ? "gitlab" : "github";
+  const scmEnabled = provisioning.includes("github") || provisioning.includes("gitlab");
+
+  const selectScmProvider = (provider: "github" | "gitlab") => {
+    setProvisioning((prev) => {
+      const enabled = prev.includes("github") || prev.includes("gitlab");
+      const base = prev.filter((k) => k !== "github" && k !== "gitlab");
+      return enabled ? [...base, provider] : base;
+    });
+  };
 
   const logs = useProvisionLogs(serviceId);
 
@@ -224,15 +236,15 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
               <StatusBadge status={result.status as typeof result.status} />
             </div>
 
-            {result.githubRepoUrl && (
+            {result.repoUrl && (
               <a
-                href={result.githubRepoUrl}
+                href={result.repoUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
-                View GitHub repository
+                View repository
               </a>
             )}
           </CardContent>
@@ -248,7 +260,7 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
         </Card>
 
         <div className="mt-6 space-y-3">
-          {(provisioning as ("github" | "terraform" | "vault")[]).map((type) => (
+          {provisioning.map((type) => (
             <details key={type} className="group">
               <summary className="text-xs font-medium text-muted-foreground cursor-pointer hover:text-foreground transition-colors capitalize">
                 {type} logs ({(logs[type] ?? []).length} entries)
@@ -278,7 +290,7 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
           </CardHeader>
 
           <CardContent className="space-y-3">
-            {(provisioning as ("github" | "terraform" | "vault")[]).map((type) => {
+            {provisioning.map((type) => {
               const typeLogs = logs[type] ?? [];
               const lastLog = typeLogs[typeLogs.length - 1] ?? "";
               const isRunning = typeLogs.length > 0 && !lastLog.includes("completed") && !lastLog.includes("successfully");
@@ -308,6 +320,7 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
 
   if (step === "review" && preview) {
     const github = (preview as Record<string, unknown>).github as Record<string, unknown> | undefined;
+    const gitlab = (preview as Record<string, unknown>).gitlab as Record<string, unknown> | undefined;
     const terraform = (preview as Record<string, unknown>).terraform as Record<string, unknown> | undefined;
     const vault = (preview as Record<string, unknown>).vault as Record<string, unknown> | undefined;
 
@@ -336,6 +349,21 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
                 <p>Template: <span className="text-foreground">{String(github?.["template"])}</span></p>
                 <p>Branch protection: <span className={github?.["enableBranchProtection"] ? "text-emerald-600 font-medium" : "text-muted-foreground"}>{github?.["enableBranchProtection"] ? "Enabled" : "Disabled"}</span></p>
                 {Boolean(github?.["notes"]) && <p className="text-amber-600">{String(github?.["notes"])}</p>}
+              </CardContent>
+            </Card>
+          )}
+          {Boolean(gitlab?.["willProvision"]) && (
+            <Card className={gitlab?.["willCreateProject"] ? "border-emerald-200" : "border-amber-200"}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Gitlab className="w-4 h-4" />GitLab
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs text-muted-foreground space-y-1">
+                <p>Project: <span className="text-foreground font-mono">{String(gitlab?.["namespace"])}/{String(gitlab?.["project"])}</span></p>
+                <p>Template: <span className="text-foreground">{String(gitlab?.["template"])}</span></p>
+                <p>Branch protection: <span className={gitlab?.["enableBranchProtection"] ? "text-emerald-600 font-medium" : "text-muted-foreground"}>{gitlab?.["enableBranchProtection"] ? "Enabled" : "Disabled"}</span></p>
+                {Boolean(gitlab?.["notes"]) && <p className="text-amber-600">{String(gitlab?.["notes"])}</p>}
               </CardContent>
             </Card>
           )}
@@ -500,9 +528,27 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
             <div className="space-y-3">
               <label className="text-sm font-medium">Provisioning</label>
               <p className="text-xs text-muted-foreground -mt-2">Select which infrastructure to provision for this service.</p>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Source control:</span>
+                {(["github", "gitlab"] as const).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => selectScmProvider(p)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs transition-all ${
+                      scmProvider === p
+                        ? "border-primary bg-primary/5 text-primary"
+                        : "border-input text-muted-foreground hover:border-primary/40"
+                    }`}
+                  >
+                    {p === "github" ? <Github className="w-3.5 h-3.5" /> : <Gitlab className="w-3.5 h-3.5" />}
+                    {p === "github" ? "GitHub" : "GitLab"}
+                  </button>
+                ))}
+              </div>
               <div className="space-y-2">
                 {([
-                  { key: "github", label: "GitHub repository", desc: "Create repo, push template, add topic" },
+                  { key: scmProvider, label: scmProvider === "github" ? "GitHub repository" : "GitLab project", desc: scmProvider === "github" ? "Create repo, push template, add topic" : "Create project, push template, add topic" },
                   { key: "terraform", label: "Terraform Cloud workspace", desc: "Create workspace + namespace variables" },
                   { key: "vault", label: "Vault secrets", desc: "Enable KV mount, ACL policy, AppRole" },
                 ] as const).map(({ key, label, desc }) => {
@@ -534,7 +580,7 @@ export function CreateServicePage({ onNavigate }: { onNavigate: (path: string) =
                   );
                 })}
               </div>
-              {provisioning.includes("github") && (
+              {scmEnabled && (
                 <label className="flex items-center gap-2 ml-7 cursor-pointer">
                   <input
                     type="checkbox"

@@ -1,38 +1,10 @@
 import { Worker, Job } from "bullmq";
 import { Octokit } from "octokit";
-import { readdirSync, readFileSync, existsSync } from "fs";
-import { join, relative, dirname } from "path";
-import { fileURLToPath } from "url";
 import { INFRAENA_MANAGED_TAG, INFRAENA_MANAGED_DESCRIPTION } from "@infraena/shared-types";
 import { prisma } from "../db/prisma.js";
 import { env } from "../lib/env.js";
+import { loadTemplate } from "./templates.js";
 import { updateJobLog, markJobRunning, markJobSuccess, markJobFailed, checkAllJobsComplete } from "./helpers.js";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const templatesDir = join(__dirname, "..", "..", "..", "..", "templates");
-
-const templateCache = new Map<string, Map<string, string>>();
-
-function loadTemplate(templateId: string): Map<string, string> | null {
-  if (templateCache.has(templateId)) return templateCache.get(templateId)!;
-
-  const dir = join(templatesDir, templateId);
-  if (!existsSync(dir)) return null;
-
-  const files = new Map<string, string>();
-  function walk(d: string) {
-    for (const entry of readdirSync(d, { withFileTypes: true })) {
-      const full = join(d, entry.name);
-      if (entry.isDirectory()) { walk(full); continue; }
-      if (entry.name === "template.json") continue;
-      const rel = relative(dir, full);
-      files.set(rel, readFileSync(full, "utf-8"));
-    }
-  }
-  walk(dir);
-  templateCache.set(templateId, files);
-  return files;
-}
 
 interface GitHubJobData {
   serviceId: string;
@@ -196,7 +168,7 @@ export async function buildGitHubWorker() {
 
       const service = await prisma.service.findUnique({
         where: { id: serviceId },
-        select: { id: true, status: true, ownerId: true },
+        select: { id: true, status: true, ownerId: true, repoUrl: true },
       });
       if (!service) {
         await markJobRunning(provisionJob);
@@ -223,6 +195,16 @@ export async function buildGitHubWorker() {
 
       try {
         const repoUrl = `https://github.com/${org}/${repo}`;
+
+        if (repoOwner && service.repoUrl) {
+          const expectedOwner = service.repoUrl.replace(/^https?:\/\/github\.com\//, "").split("/")[0];
+          if (expectedOwner && expectedOwner.toLowerCase() !== repoOwner.toLowerCase()) {
+            throw new Error("Refusing to operate: repo owner does not match the service's registered repository");
+          }
+        } else if (repoOwner && env.GITHUB_ORG && repoOwner.toLowerCase() !== env.GITHUB_ORG.toLowerCase()) {
+          throw new Error("Refusing to operate outside the configured GITHUB_ORG");
+        }
+
         const exists = await repoExists(octokit, org, repo);
 
         // Fetch owner for consistent commit identity
@@ -255,12 +237,12 @@ export async function buildGitHubWorker() {
 
         const currentSvc = await prisma.service.findUnique({
           where: { id: serviceId },
-          select: { githubRepoUrl: true },
+          select: { repoUrl: true },
         });
-        if (!currentSvc?.githubRepoUrl) {
+        if (!currentSvc?.repoUrl) {
           await prisma.service.update({
             where: { id: serviceId },
-            data: { githubRepoUrl: repoUrl },
+            data: { repoUrl, repoProvider: "github" },
           });
           await log(`GitHub repo URL saved: ${repoUrl}`);
         }

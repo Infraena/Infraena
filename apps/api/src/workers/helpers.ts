@@ -1,4 +1,5 @@
 import { ProvisionJob } from "@prisma/client";
+import type { JobType } from "@infraena/shared-types";
 import { prisma } from "../db/prisma.js";
 import { emitJobUpdate } from "../lib/socket.js";
 import { provisionJobsTotal, recordProvisionJob, servicesGauge } from "../lib/metrics.js";
@@ -22,7 +23,7 @@ export async function updateJobLog(
   emitJobUpdate(job.serviceId, {
     jobId: job.id,
     serviceId: job.serviceId,
-    type: job.type as "github" | "terraform" | "vault",
+    type: job.type as JobType,
     status: job.status as "pending" | "running" | "success" | "failed",
     log: logEntry,
   });
@@ -42,7 +43,7 @@ export async function markJobRunning(job: ProvisionJob): Promise<ProvisionJob> {
   emitJobUpdate(job.serviceId, {
     jobId: job.id,
     serviceId: job.serviceId,
-    type: job.type as "github" | "terraform" | "vault",
+    type: job.type as JobType,
     status: "running",
     log: `Job ${job.type} started`,
   });
@@ -69,7 +70,7 @@ export async function markJobSuccess(job: ProvisionJob): Promise<void> {
   emitJobUpdate(job.serviceId, {
     jobId: job.id,
     serviceId: job.serviceId,
-    type: job.type as "github" | "terraform" | "vault",
+    type: job.type as JobType,
     status: "success",
     log: `Job ${job.type} completed successfully`,
   });
@@ -95,7 +96,7 @@ export async function markJobFailed(
   emitJobUpdate(job.serviceId, {
     jobId: job.id,
     serviceId: job.serviceId,
-    type: job.type as "github" | "terraform" | "vault",
+    type: job.type as JobType,
     status: "failed",
     log: `Job ${job.type} failed: ${errorMessage}`,
   });
@@ -136,12 +137,12 @@ export async function checkAllJobsComplete(serviceId: string) {
 
     const svc = await prisma.service.findUnique({
       where: { id: serviceId },
-      select: { slug: true, githubRepoUrl: true },
+      select: { slug: true, repoUrl: true },
     });
     if (svc) {
       const message = hasErrors
         ? `Provisioning failed for ${svc.slug}: one or more steps failed`
-        : `Service ${svc.slug} is ready${svc.githubRepoUrl ? ` — repo: ${svc.githubRepoUrl}` : ""}`;
+        : `Service ${svc.slug} is ready${svc.repoUrl ? ` — repo: ${svc.repoUrl}` : ""}`;
       void notify({
         event: hasErrors ? "service.failed" : "service.ready",
         serviceId,

@@ -32,7 +32,8 @@ export type ServiceCategory = keyof typeof CATEGORIES;
 export type ServiceLanguage = (typeof CATEGORIES)[ServiceCategory][number];
 export type ServiceStatus = "provisioning" | "ready" | "failed" | "imported";
 export type HealthStatus = "unknown" | "healthy" | "unhealthy";
-export type ProvisioningStep = "github" | "terraform" | "vault";
+export type RepoProvider = "github" | "gitlab";
+export type ProvisioningStep = "github" | "gitlab" | "terraform" | "vault";
 export type JobType = ProvisioningStep;
 export type JobStatus = "pending" | "running" | "success" | "failed";
 export type DeploymentStatus = "pending" | "running" | "success" | "failed";
@@ -47,7 +48,8 @@ export interface Service {
   languages: ServiceLanguage[];
   teamId: string;
   ownerId: string;
-  githubRepoUrl: string | null;
+  repoUrl: string | null;
+  repoProvider: RepoProvider | null;
   provisioning: ProvisioningStep[];
   status: ServiceStatus;
   healthUrl: string | null;
@@ -100,6 +102,8 @@ export interface CreateServiceInput {
   category: ServiceCategory;
   languages?: ServiceLanguage[];
   template?: string;
+  provisioning?: ProvisioningStep[];
+  enableBranchProtection?: boolean;
 }
 
 export interface JobUpdateMessage {

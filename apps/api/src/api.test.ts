@@ -3,6 +3,11 @@ import { app } from "./app.js";
 import { prisma } from "./db/prisma.js";
 import * as jose from "jose";
 import { env } from "./lib/env.js";
+import { isOrgMember } from "./routes/auth.js";
+
+vi.mock("node:dns/promises", () => ({
+  lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
+}));
 
 let baseUrl: string;
 let authToken: string;
@@ -263,11 +268,35 @@ describe("Services", () => {
     expect(res.status).toBe(400);
   });
 
-  it("POST /api/services/import rejects non-GitHub URL", async () => {
+  it("GET /api/services/preview includes a gitlab block", async () => {
+    const res = await fetch(`${baseUrl}/api/services/preview?name=my-service&provisioning=gitlab`);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data).toHaveProperty("gitlab");
+    expect(data.gitlab.willProvision).toBe(true);
+    expect(data.github.willProvision).toBe(false);
+  });
+
+  it("POST /api/services rejects github and gitlab together", async () => {
+    const res = await fetch(`${baseUrl}/api/services`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({
+        name: `svc-both-${Date.now()}`,
+        teamId,
+        category: "backend",
+        languages: [],
+        provisioning: ["github", "gitlab"],
+      }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /api/services/import rejects a non-GitHub/non-GitLab URL", async () => {
     const res = await fetch(`${baseUrl}/api/services/import`, {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ repoUrl: "https://gitlab.com/user/repo", teamId }),
+      body: JSON.stringify({ repoUrl: "https://bitbucket.org/user/repo", teamId }),
     });
     expect(res.status).toBe(400);
   });
@@ -666,8 +695,8 @@ describe("Setup", () => {
       string,
       { required: boolean; envVars: string[]; provider?: string }
     >;
-    const providerKeys = ["github", "githubOAuth", "terraform", "vault", "argocd"];
-    const infraKeys = ["database", "redis"];
+    const providerKeys = ["github", "gitlab", "githubOAuth", "terraform", "vault", "argocd"];
+    const infraKeys = ["database", "redis", "scm"];
 
     for (const key of Object.keys(checks)) {
       expect(typeof checks[key].required).toBe("boolean");
@@ -680,16 +709,21 @@ describe("Setup", () => {
       expect(checks[key].provider).toBeUndefined();
     }
     expect(checks.argocd.required).toBe(false);
-    for (const key of ["database", "redis", "vault", "github", "githubOAuth", "terraform"]) {
+    expect(checks.github.required).toBe(false);
+    expect(checks.gitlab.required).toBe(false);
+    expect(checks.githubOAuth.required).toBe(false);
+    for (const key of ["database", "redis", "vault", "terraform", "scm"]) {
       expect(checks[key].required).toBe(true);
     }
     expect(checks.github.provider).toBe("github-pat");
+    expect(checks.gitlab.provider).toBe("gitlab-pat");
     expect(checks.githubOAuth.provider).toBe("github-oauth");
     expect(checks.terraform.provider).toBe("terraform");
     expect(checks.vault.provider).toBe("vault");
     expect(checks.argocd.provider).toBe("argocd");
     expect(checks.github.envVars).toContain("GITHUB_TOKEN");
     expect(checks.github.envVars).toContain("GITHUB_ORG");
+    expect(checks.gitlab.envVars).toContain("GITLAB_TOKEN");
     expect(checks.githubOAuth.envVars).toContain("GITHUB_CLIENT_ID");
     expect(checks.terraform.envVars).toContain("TERRAFORM_CLOUD_TOKEN");
   });
@@ -698,9 +732,20 @@ describe("Setup", () => {
     const res = await fetch(`${baseUrl}/api/setup/validate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider: "gitlab", token: "x" }),
+      body: JSON.stringify({ provider: "bitbucket", token: "x" }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it("POST /api/setup/validate accepts a gitlab token", async () => {
+    const res = await fetch(`${baseUrl}/api/setup/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "gitlab", token: "glpat-valid" }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
   });
 
   it("POST /api/setup/validate rejects overly long tokens", async () => {
@@ -1109,10 +1154,32 @@ describe("Metrics", () => {
   });
 });
 
+describe("Security headers", () => {
+  it("sets X-Frame-Options, X-Content-Type-Options and Referrer-Policy", async () => {
+    const res = await fetch(`${baseUrl}/health`);
+    expect(res.headers.get("x-frame-options")).toBe("DENY");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+});
+
 describe("Auth", () => {
   it("GET /auth/me returns 401 without token", async () => {
     const res = await fetch(`${baseUrl}/auth/me`);
     expect(res.status).toBe(401);
+  });
+
+  it("GET /auth/github sets an OAuth state cookie and redirects", async () => {
+    const res = await fetch(`${baseUrl}/auth/github`, { redirect: "manual" });
+    expect(res.status).toBe(302);
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain("infraena_oauth_state");
+    expect(res.headers.get("location")).toContain("state=");
+  });
+
+  it("GET /auth/github/callback rejects a missing or mismatched state", async () => {
+    const res = await fetch(`${baseUrl}/auth/github/callback?code=x&state=bad`);
+    expect(res.status).toBe(400);
   });
 
   it("POST /api/services returns 401 without auth", async () => {
@@ -1122,5 +1189,59 @@ describe("Auth", () => {
       body: JSON.stringify({ name: "noauth", category: "backend", teamId: "00000000-0000-0000-0000-000000000000" }),
     });
     expect(res.status).toBe(401);
+  });
+
+  it("member gets 403 on admin-only routes", async () => {
+    const secret = new TextEncoder().encode(env.JWT_SECRET);
+    const memberToken = await new jose.SignJWT({ sub: "00000000-0000-0000-0000-000000000000", username: "member", role: "member" })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("1h")
+      .sign(secret);
+    const headers = { Authorization: `Bearer ${memberToken}` };
+
+    const del = await fetch(`${baseUrl}/api/services/some-slug`, { method: "DELETE", headers });
+    expect(del.status).toBe(403);
+
+    const team = await fetch(`${baseUrl}/api/teams`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "nope" }),
+    });
+    expect(team.status).toBe(403);
+
+    const bulk = await fetch(`${baseUrl}/api/services/bulk-delete`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: [] }),
+    });
+    expect(bulk.status).toBe(403);
+  });
+
+  it("member can reach non-admin authenticated routes", async () => {
+    const secret = new TextEncoder().encode(env.JWT_SECRET);
+    const memberToken = await new jose.SignJWT({ sub: "00000000-0000-0000-0000-000000000000", username: "member", role: "member" })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("1h")
+      .sign(secret);
+    const res = await fetch(`${baseUrl}/api/services/nonexistent-slug`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${memberToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ description: "x" }),
+    });
+    expect(res.status).not.toBe(403);
+  });
+
+  it("isOrgMember returns true on 204 and false on 404", async () => {
+    const original = globalThis.fetch;
+    try {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+      expect(await isOrgMember("tok", "acme", "alice")).toBe(true);
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
+      expect(await isOrgMember("tok", "acme", "bob")).toBe(false);
+    } finally {
+      vi.stubGlobal("fetch", original);
+    }
   });
 });

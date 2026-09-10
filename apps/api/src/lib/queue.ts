@@ -7,9 +7,11 @@ const connection = {
 };
 
 export const githubQueue = new Queue("github-queue", { connection });
+export const gitlabQueue = new Queue("gitlab-queue", { connection });
 export const terraformQueue = new Queue("terraform-queue", { connection });
 export const vaultQueue = new Queue("vault-queue", { connection });
 
 export const githubEvents = new QueueEvents("github-queue", { connection });
+export const gitlabEvents = new QueueEvents("gitlab-queue", { connection });
 export const terraformEvents = new QueueEvents("terraform-queue", { connection });
 export const vaultEvents = new QueueEvents("vault-queue", { connection });

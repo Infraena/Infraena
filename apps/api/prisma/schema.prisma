@@ -45,7 +45,8 @@ model Service {
   team          Team             @relation(fields: [teamId], references: [id])
   ownerId       String?          @map("owner_id") @db.Uuid
   owner         User?            @relation(fields: [ownerId], references: [id])
-  githubRepoUrl String?          @map("github_repo_url")
+  repoUrl       String?          @map("repo_url")
+  repoProvider  String?          @map("repo_provider")
   provisioning  String[]         @default(["github","terraform","vault"])
   status        String           @default("provisioning")
   healthUrl     String?          @map("health_url")
@@ -62,6 +63,7 @@ model Service {
   webhooks          Webhook[]
   webhookEvents     WebhookEvent[]
 
+  @@index([repoProvider])
   @@map("services")
 }
 

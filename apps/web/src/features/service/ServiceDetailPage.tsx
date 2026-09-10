@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  ArrowLeft, ExternalLink, Github, Server, Key, Clock, Calendar, Hash, Rocket, CircleDot,
+  ArrowLeft, ExternalLink, Github, Gitlab, Server, Key, Clock, Calendar, Hash, Rocket, CircleDot,
   Trash2, ChevronLeft, ChevronRight, Copy, Check, Pencil, X, Bolt,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -50,6 +50,7 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
   const [editDesc, setEditDesc] = useState("");
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const scmStep = service?.repoProvider === "gitlab" ? "gitlab" : "github";
   const [showDeployDialog, setShowDeployDialog] = useState(false);
   const [deployEnvironment, setDeployEnvironment] = useState("staging");
   const [deployVersion, setDeployVersion] = useState("");
@@ -352,8 +353,8 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          {service.githubRepoUrl && (
-            <a href={service.githubRepoUrl} target="_blank" rel="noopener noreferrer">
+          {service.repoUrl && (
+            <a href={service.repoUrl} target="_blank" rel="noopener noreferrer">
               <Button variant="outline" size="sm" className="gap-1.5">
                 <Github className="w-3.5 h-3.5" />Repo
               </Button>
@@ -447,7 +448,7 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
                     <div key={job.id}>
                       <div className="flex items-center justify-between mb-1.5">
                         <span className="text-sm font-medium capitalize flex items-center gap-2">
-                          {job.type === "github" ? <Github className="w-3.5 h-3.5" /> : job.type === "terraform" ? <Server className="w-3.5 h-3.5" /> : <Key className="w-3.5 h-3.5" />}
+                          {job.type === "github" ? <Github className="w-3.5 h-3.5" /> : job.type === "gitlab" ? <Gitlab className="w-3.5 h-3.5" /> : job.type === "terraform" ? <Server className="w-3.5 h-3.5" /> : <Key className="w-3.5 h-3.5" />}
                           {job.type}
                         </span>
                         <Badge variant={job.status === "success" ? "outline" : job.status === "failed" ? "destructive" : "secondary"} className="text-[10px]">
@@ -489,12 +490,12 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
                   </button>
                 </span>
               </div>
-              {service.githubRepoUrl && (
+              {service.repoUrl && (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Github className="w-3.5 h-3.5" />
                   <span className="text-xs truncate flex items-center gap-1">
-                    {service.githubRepoUrl.replace("https://github.com/", "")}
-                    <button onClick={() => doCopy(service.githubRepoUrl!, "repo")} className="hover:text-foreground shrink-0">
+                    {service.repoUrl.replace(/^https?:\/\/[^/]+\//, "")}
+                    <button onClick={() => doCopy(service.repoUrl!, "repo")} className="hover:text-foreground shrink-0">
                       {copied === "repo" ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
                     </button>
                   </span>
@@ -656,7 +657,7 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
             </p>
             <div className="space-y-2 mb-5">
               {([
-                { key: "github", label: "GitHub topic" },
+                { key: scmStep, label: scmStep === "gitlab" ? "GitLab topic" : "GitHub topic" },
                 { key: "terraform", label: "Terraform Cloud workspace" },
                 { key: "vault", label: "Vault secrets" },
               ] as const).map(({ key, label }) => {
@@ -679,7 +680,7 @@ export function ServiceDetailPage({ slug, onNavigate }: { slug: string; onNaviga
                 );
               })}
             </div>
-            {provisionSteps.includes("github") && !doneSteps.has("github") && (
+            {provisionSteps.includes(scmStep) && !doneSteps.has(scmStep) && (
               <label className="flex items-center gap-2 cursor-pointer mb-5">
                 <input type="checkbox" checked={provisionBranchProtection} onChange={(e) => setProvisionBranchProtection(e.target.checked)} className="h-3.5 w-3.5 rounded border-input text-primary focus:ring-primary" />
                 <span className="text-xs text-muted-foreground">Enable branch protection</span>

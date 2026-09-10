@@ -3,7 +3,7 @@ import { z } from "zod";
 import { Octokit } from "octokit";
 import { prisma } from "../db/prisma.js";
 import { env } from "../lib/env.js";
-import { authMiddleware, getUser } from "../lib/auth.js";
+import { authMiddleware, requireAdmin, getUser } from "../lib/auth.js";
 
 const createTeamSchema = z.object({
   name: z.string().min(2).max(50),
@@ -11,6 +11,10 @@ const createTeamSchema = z.object({
 
 const updateTeamSchema = z.object({
   name: z.string().min(2).max(50),
+});
+
+const repoAccessSchema = z.object({
+  username: z.string().min(1).max(100),
 });
 
 const addMemberSchema = z.object({
@@ -33,7 +37,7 @@ export async function teamRoutes(app: FastifyInstance) {
     });
   });
 
-  app.post("/", { preHandler: [authMiddleware] }, async (request, reply) => {
+  app.post("/", { preHandler: [authMiddleware, requireAdmin] }, async (request, reply) => {
     const parseResult = createTeamSchema.safeParse(request.body);
     if (!parseResult.success) {
       return reply
@@ -78,7 +82,7 @@ export async function teamRoutes(app: FastifyInstance) {
     return team;
   });
 
-  app.patch("/:slug", { preHandler: [authMiddleware] }, async (request, reply) => {
+  app.patch("/:slug", { preHandler: [authMiddleware, requireAdmin] }, async (request, reply) => {
     const { slug } = request.params as { slug: string };
     const parseResult = updateTeamSchema.safeParse(request.body);
     if (!parseResult.success) {
@@ -107,7 +111,7 @@ export async function teamRoutes(app: FastifyInstance) {
     return { success: true, data: updated };
   });
 
-  app.post("/:slug/members", { preHandler: [authMiddleware] }, async (request, reply) => {
+  app.post("/:slug/members", { preHandler: [authMiddleware, requireAdmin] }, async (request, reply) => {
     const { slug } = request.params as { slug: string };
     const parseResult = addMemberSchema.safeParse(request.body);
     if (!parseResult.success) {
@@ -141,13 +145,13 @@ export async function teamRoutes(app: FastifyInstance) {
     let reposGranted = 0;
     if (parseResult.data.grantRepoAccess && env.GITHUB_TOKEN) {
       const services = await prisma.service.findMany({
-        where: { teamId: team.id, githubRepoUrl: { not: null } },
-        select: { githubRepoUrl: true },
+        where: { teamId: team.id, repoProvider: "github", repoUrl: { not: null } },
+        select: { repoUrl: true },
       });
 
       const octokit = new Octokit({ auth: env.GITHUB_TOKEN });
       for (const svc of services) {
-        const parts = svc.githubRepoUrl!.replace("https://github.com/", "").replace(/\/$/, "").split("/");
+        const parts = svc.repoUrl!.replace("https://github.com/", "").replace(/\/$/, "").split("/");
         if (parts.length < 2) continue;
         try {
           await octokit.rest.repos.addCollaborator({
@@ -170,7 +174,7 @@ export async function teamRoutes(app: FastifyInstance) {
     };
   });
 
-  app.delete("/:slug/members/:userId", { preHandler: [authMiddleware] }, async (request, reply) => {
+  app.delete("/:slug/members/:userId", { preHandler: [authMiddleware, requireAdmin] }, async (request, reply) => {
     const { slug, userId } = request.params as { slug: string; userId: string };
 
     const team = await prisma.team.findUnique({ where: { slug } });
@@ -191,13 +195,13 @@ export async function teamRoutes(app: FastifyInstance) {
     return { success: true };
   });
 
-  app.post("/:slug/repo-access", { preHandler: [authMiddleware] }, async (request, reply) => {
+  app.post("/:slug/repo-access", { preHandler: [authMiddleware, requireAdmin] }, async (request, reply) => {
     const { slug } = request.params as { slug: string };
-    const body = (request.body ?? {}) as { username?: string };
-    const username = body.username?.trim();
-    if (!username) {
+    const parsed = repoAccessSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
       return reply.status(400).send({ error: "username is required" });
     }
+    const username = parsed.data.username.trim();
 
     const team = await prisma.team.findUnique({ where: { slug } });
     if (!team) {
@@ -209,8 +213,8 @@ export async function teamRoutes(app: FastifyInstance) {
     }
 
     const services = await prisma.service.findMany({
-      where: { teamId: team.id, githubRepoUrl: { not: null } },
-      select: { githubRepoUrl: true },
+      where: { teamId: team.id, repoProvider: "github", repoUrl: { not: null } },
+      select: { repoUrl: true },
     });
 
     if (services.length === 0) {
@@ -222,7 +226,7 @@ export async function teamRoutes(app: FastifyInstance) {
     const errors: string[] = [];
 
     for (const svc of services) {
-      const parts = svc.githubRepoUrl!.replace("https://github.com/", "").replace(/\/$/, "").split("/");
+      const parts = svc.repoUrl!.replace("https://github.com/", "").replace(/\/$/, "").split("/");
       if (parts.length < 2) continue;
       if (parts[0].toLowerCase() === username.toLowerCase()) continue; // repo owner — skip
       try {
@@ -250,7 +254,7 @@ export async function teamRoutes(app: FastifyInstance) {
     };
   });
 
-  app.delete("/:slug/repo-access/:userId", { preHandler: [authMiddleware] }, async (request, reply) => {
+  app.delete("/:slug/repo-access/:userId", { preHandler: [authMiddleware, requireAdmin] }, async (request, reply) => {
     const { slug, userId } = request.params as { slug: string; userId: string };
 
     const team = await prisma.team.findUnique({ where: { slug } });
@@ -268,8 +272,8 @@ export async function teamRoutes(app: FastifyInstance) {
     }
 
     const services = await prisma.service.findMany({
-      where: { teamId: team.id, githubRepoUrl: { not: null } },
-      select: { githubRepoUrl: true },
+      where: { teamId: team.id, repoProvider: "github", repoUrl: { not: null } },
+      select: { repoUrl: true },
     });
 
     const octokit = new Octokit({ auth: env.GITHUB_TOKEN });
@@ -277,7 +281,7 @@ export async function teamRoutes(app: FastifyInstance) {
     const errors: string[] = [];
 
     for (const svc of services) {
-      const parts = svc.githubRepoUrl!.replace("https://github.com/", "").replace(/\/$/, "").split("/");
+      const parts = svc.repoUrl!.replace("https://github.com/", "").replace(/\/$/, "").split("/");
       if (parts.length < 2) continue;
       if (parts[0].toLowerCase() === user.username.toLowerCase()) continue; // repo owner — skip
       try {
@@ -304,7 +308,7 @@ export async function teamRoutes(app: FastifyInstance) {
     };
   });
 
-  app.delete("/:slug", { preHandler: [authMiddleware] }, async (request, reply) => {
+  app.delete("/:slug", { preHandler: [authMiddleware, requireAdmin] }, async (request, reply) => {
     const { slug } = request.params as { slug: string };
 
     const team = await prisma.team.findUnique({
